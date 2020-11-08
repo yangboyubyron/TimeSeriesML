@@ -1,0 +1,169 @@
+#' OneHot: One-Hot DateTime encoding.
+#' @param timestamps: DateTime values.
+#' @return Table of encoded values.
+OneHot = function(timestamps) {
+    Bits = function(values, min, max, name) {
+        Default = function() {
+            nrow = Count(values)
+            ncol = max - min + 1
+            data = matrix(rep(0, nrow * ncol), nrow = nrow, ncol = ncol)
+            colnames(data) = paste(name, min:max, sep = "")
+            return(as.data.frame(data))
+        }
+        Factors = function(x) {
+            f = as.matrix(as.factor(as.vector(x)))
+            colnames(f) = name
+            return(f)
+        }
+        EncodeOne = function() {
+            nrow = Count(values)
+            encoded = as.matrix(rep(1, nrow), nrow = nrow, ncol = 1)
+            colnames(encoded) = paste(name, values[1], sep = "")
+            return(encoded)
+        }
+        EncodeMany = function() {
+            selection = paste("~", name, sep = "")
+            encoder = dummyVars(selection, data = Factors(min:max))
+            encoded = data.frame(predict(encoder, newdata = Factors(values)))
+            return(encoded)
+        }
+        Encode = function() {
+            count = Count(unique(values))
+            if (count == 0) return(c())
+            if (count == 1) return(EncodeOne())
+            return(EncodeMany())
+        }
+
+        result = Default()
+        encoded = Encode()
+        result[,colnames(encoded)] = encoded
+        return(result)
+    }
+
+    months.of.year = Bits(DatePart(timestamps, "%m"), 1, 12, "M")
+    days.of.week = Bits(DatePart(timestamps, "%w") + 1, 1, 7, "D")
+    hours.of.day = Bits(DatePart(timestamps, "%H") + 1, 1, 24, "H")
+    joined = Join(Join(months.of.year, days.of.week), hours.of.day)
+    return(joined)
+}
+
+#' Decompose: Time Series Decomposition
+#' Decomposes given profile into selected number of components.
+#' @param profile: One row from a table of profiles.
+#' @param count: Preferred but not necessarily resulting number of components (depends on algorithm).
+#' @param algorithm: One of available decomposition algorithms:
+#' 1) "VMD": Variational Mode Decomposition
+#' 2) "EMD": Empirical Mode Decomposition
+#' 3) "SSA": Singular Spectrum Analysis
+#' @return Table of components ordered by noise (one row per component).
+Decompose = function(profile, count = 10, algorithm = "VMD") {
+    SSA = function(signal, count) {
+        ssa.result = reconstruct(ssa(signal))
+        components = as.data.frame(ssa.result[])
+        return(components)
+    }
+    EMD = function(signal, count) {
+        emd.result = emd(signal, max.imf = count - 1)
+        components = Join(emd.result$residue, emd.result$imf)
+        return(components)
+    }
+    VMD = function(signal, count) {
+        vmd.result = vmd(signal, K = count)
+        # plot(vmd.result, facet = 'bymode', scales = 'free')
+        vmd.result = as.data.frame(vmd.result)
+        components = vmd.result[, 3:(ncol(vmd.result) - 1)]
+        return(components)
+    }
+
+    signal = as.numeric(as.vector(profile))
+    if (Count(signal) == 0) {
+        Log("Decomposition skipped. There is nothing to decompose.")
+        return(c())
+    }
+    if (count < 2) {
+        count = 2
+    }
+
+    components = NULL
+    if (algorithm == "SSA") {
+        components = SSA(signal, count)
+    } else if (algorithm == "EMD") {
+        components = EMD(signal, count)
+    } else {
+        components = VMD(signal, count)
+    }
+
+    components = as.data.frame(t(components))
+    colnames(components) = colnames(profile)
+    row.names(components) = c()
+    return(components)
+}
+
+#' Denoise: Time Series Decomposition-Based Noise Removal
+#' Decomposes given profiles into selected number of components and removes the last component from each one.
+#' @param profiles: Table of profiles to denoise (one row per profile).
+#' @param count: Preferred but not necessarily resulting number of components (depends on algorithm).
+#' @param algorithm: One of available decomposition algorithms:
+#' 1) "VMD": Variational Mode Decomposition
+#' 2) "EMD": Empirical Mode Decomposition
+#' 3) "SSA": Singular Spectrum Analysis
+#' @return Denoised profiles.
+Denoise = function(profiles, count = 10, algorithm = "VMD") {
+    profiles.rowcount = Count(profiles)
+    Log(c("Denoising started (", profiles.rowcount, " profiles, ", count, " components, ", algorithm, ")... "))
+    stopwatch = StopwatchStartNew()
+
+    result = c()
+    for (row in 1:profiles.rowcount) {
+        profile = profiles[row,]
+        components = Decompose(profile, count, algorithm)
+        components.rowcount = Count(components)
+
+        denoised = components
+        if (components.rowcount > 1) {
+            denoised = colSums(components[1:(components.rowcount - 1),])
+        }
+
+        result = Union(result, denoised)
+    }
+
+    row.names(result) = row.names(profiles)
+    Log(c("Denoising finished (duration = ", StopwatchElapsedSeconds(stopwatch), " second(s))."))
+    return(result)
+}
+
+#' ExtractFeatures: Feature extraction based on Principal Component Analysis (PCA).
+#' @param profiles: Table of profiles to denoise (one row per profile).
+#' @param percentage: Percentage of variance explained with reduced dataset.
+#' @return Table of transformed profiles with reduced dimensionality.
+ExtractFeatures = function(profiles, percentage = 95) {
+    Log("Extracting features with PCA...")
+    original = ncol(profiles)
+
+    columns = c()
+    for (column in 1:original) {
+        columns = c(columns, Count(unique(profiles[, column])) > 1)
+    }
+
+    result = prcomp(profiles[, columns], center = TRUE, scale = TRUE)
+    variance = result$sdev ^ 2
+    proportion = cumsum(variance / sum(variance))
+    explained = proportion[proportion <= (percentage / 100)]
+    reduced = max(Count(explained), 2)
+    reduction = (1 - reduced / original) * 100
+    Log(c("Dimensionality reduced from ", original, " to ", reduced, " (", reduction, " %)."))
+    return(as.data.frame(result$x[, 1:reduced]))
+}
+
+#' SelectFeatures: Feature selection based on Joint Mutual Information Maximisation (JMIM).
+#' @param x: Table of inputs (one column per variable and one row per example).
+#' @param y: Table of outputs (one column per variable and one row per example).
+#' @param count: Number of features to select.
+#' @return Table of inputs with selected features.
+SelectFeatures = function(x, y, count) {
+    if (count >= Count(x)) return(x)
+    if (count < 1) count = 1
+
+    result = JMIM(x, y, count)
+    return(x[, result$selection])
+}
