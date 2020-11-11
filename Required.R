@@ -52,3 +52,6 @@ suppressWarnings(suppressMessages({
 
 # Workaround for broken VMD package that cannot be installed from CRAN:
 source("https://raw.githubusercontent.com/igormanojlovic/TimeSeriesML/main/VMD.R")
+
+# Disabling TensorFlow info messages:
+py_run_string("import os; os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2';")
