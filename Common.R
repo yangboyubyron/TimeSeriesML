@@ -120,11 +120,12 @@ GetPath = function(folder, file, extension) {
 #' @param ext: File extension.
 #' @param separator: Column separator.
 #' @param rows: Shows whether or not to export row names.
+#' @param verbose: Shows whether or not to log file path.
 #' @return Imported csv file as a table.
-ImportCSV = function(folder, file, ext = "csv", separator = "|", rows = FALSE) {
+ImportCSV = function(folder, file, ext = "csv", separator = "|", rows = FALSE, verbose = FALSE) {
     row.names = ifelse(rows, 1, NULL)
     path = GetPath(folder, file, ext)
-    Log(c("Importing ", path))
+    if (verbose) Log(c("Importing ", path))
     return(read.table(file = path, sep = separator, header = TRUE, row.names = row.names))
 }
 
@@ -135,9 +136,10 @@ ImportCSV = function(folder, file, ext = "csv", separator = "|", rows = FALSE) {
 #' @param ext: File extension.
 #' @param separator: Column separator.
 #' @param rows: Shows whether or not to export row names.
-ExportCSV = function(table, folder, file, ext = "csv", separator = "|", rows = FALSE) {
+#' @param verbose: Shows whether or not to log file path.
+ExportCSV = function(table, folder, file, ext = "csv", separator = "|", rows = FALSE, verbose = FALSE) {
     path = GetPath(folder, file, ext)
-    Log(c("Exporting ", path))
+    if (verbose) Log(c("Exporting ", path))
     dir.create(paste(folder, collapse = ""), recursive = TRUE, showWarnings = FALSE)
     write.table(table, file = path, sep = separator, col.names = TRUE, row.names = rows, quote = FALSE)
 }
@@ -145,16 +147,17 @@ ExportCSV = function(table, folder, file, ext = "csv", separator = "|", rows = F
 #' OpenSqlConnection: Opens trusted connection to SQL Server database.
 #' @param instance: SQL Server instance.
 #' @param database: SQL Server database.
+#' @param verbose: Shows whether or not to log connection details.
 #' @return An open connection to SQL Server database.
-OpenSqlConnection = function(instance, database) {
+OpenSqlConnection = function(instance, database, verbose = FALSE) {
     string = paste("driver={SQL Server};server=.\\", instance, ";database=", database, ";trusted_connection=true", sep = "")
-    Log(c("Connecting to SQL Server: ", string))
+    if (verbose) Log(c("Connecting to SQL Server: ", string))
 
     connection = RODBC::odbcDriverConnect(string)
     if (connection == -1) {
         stop("Failed to connect to SQL Server.")
     } else {
-        Log("Connected to SQL Server.")
+        if (verbose) Log("Connected to SQL Server.")
     }
 
     return(connection)
