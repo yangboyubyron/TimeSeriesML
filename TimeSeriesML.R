@@ -1,0 +1,8 @@
+source("https://raw.githubusercontent.com/igormanojlovic/TimeSeriesML/main/Required.R")
+source("https://raw.githubusercontent.com/igormanojlovic/TimeSeriesML/main/Common.R")
+source("https://raw.githubusercontent.com/igormanojlovic/TimeSeriesML/main/Normalization.R")
+source("https://raw.githubusercontent.com/igormanojlovic/TimeSeriesML/main/Representation.R")
+source("https://raw.githubusercontent.com/igormanojlovic/TimeSeriesML/main/Grouping.R")
+source("https://raw.githubusercontent.com/igormanojlovic/TimeSeriesML/main/Optimization.R")
+source("https://raw.githubusercontent.com/igormanojlovic/TimeSeriesML/main/Forecast.R")
+source("https://raw.githubusercontent.com/igormanojlovic/TimeSeriesML/main/LPR.R")
