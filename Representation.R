@@ -1,8 +1,11 @@
-#' OneHot: One-Hot DateTime encoding.
+#' EncodeTime: DateTime encoding.
 #' @param timestamps: DateTime values.
+#' @param type: One of available encoding types:
+1) "polar": Polar coordinate system.
+2) "onehot": One-Hot encoding.
 #' @return Table of encoded values.
-OneHot = function(timestamps) {
-    Bits = function(values, min, max, name) {
+EncodeTime = function(timestamps, type = "polar") {
+    OneHot = function(values, min, max, name) {
         Default = function() {
             nrow = Count(values)
             ncol = max - min + 1
@@ -39,10 +42,22 @@ OneHot = function(timestamps) {
         result[,colnames(encoded)] = encoded
         return(result)
     }
+    Polar = function(values, min, max, name) {
+        degree = 2*pi*(values-min)/max
+        x = sin(degree)
+        y = cos(degree)
+        name.x = paste("sin", name, sep = "")
+        name.y = paste("cos", name, sep = "")
+        return(Join(x, y, name.x, name.y))
+    }
+    Transform = function(values, min, max, name) {
+        if (type == "onehot") return(OneHot(values, min, max, name))
+        return(Polar(values, min, max, name))
+    }
 
-    months.of.year = Bits(DatePart(timestamps, "%m"), 1, 12, "M")
-    days.of.week = Bits(DatePart(timestamps, "%w") + 1, 1, 7, "D")
-    hours.of.day = Bits(DatePart(timestamps, "%H") + 1, 1, 24, "H")
+    months.of.year = Transform(DatePart(timestamps, "%m"), 1, 12, "M")
+    days.of.week = Transform(DatePart(timestamps, "%w") + 1, 1, 7, "D")
+    hours.of.day = Transform(DatePart(timestamps, "%H") + 1, 1, 24, "H")
     joined = Join(Join(months.of.year, days.of.week), hours.of.day)
     return(joined)
 }
