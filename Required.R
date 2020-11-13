@@ -26,6 +26,7 @@ suppressWarnings(suppressMessages({
                  "praznik",
                  "e1071",
                  "verification",
+                 "predictionInterval",
                  "metaheuristicOpt")
     for (package in packages) {
         if (!require(package, character.only = TRUE, quietly = TRUE, warn.conflicts = FALSE)) {
