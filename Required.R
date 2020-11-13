@@ -25,6 +25,7 @@ suppressWarnings(suppressMessages({
                  "EMD",
                  "praznik",
                  "e1071",
+                 "verification",
                  "metaheuristicOpt")
     for (package in packages) {
         if (!require(package, character.only = TRUE, quietly = TRUE, warn.conflicts = FALSE)) {
