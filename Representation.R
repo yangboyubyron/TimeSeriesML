@@ -1,8 +1,8 @@
 #' EncodeTime: DateTime encoding.
 #' @param timestamps: DateTime values.
 #' @param type: One of available encoding types:
-1) "polar": Polar coordinate system.
-2) "onehot": One-Hot encoding.
+#' 1) "polar": Polar coordinate system.
+#' 2) "onehot": One-Hot encoding.
 #' @return Table of encoded values.
 EncodeTime = function(timestamps, type = "polar") {
     OneHot = function(values, min, max, name) {
