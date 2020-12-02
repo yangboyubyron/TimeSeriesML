@@ -53,7 +53,7 @@ suppressWarnings(suppressMessages({
 # Also, try reinstating tensorflow and keras using the commands above.
 
 # Workaround for broken VMD package that cannot be installed from CRAN:
-source("https://raw.githubusercontent.com/igormanojlovic/TimeSeriesML/main/VMD.R")
+source("https://raw.githubusercontent.com/igormanojlovic/TimeSeriesML/main/R/VMD.R")
 
 # Disabling TensorFlow info messages:
 py_run_string("import os; os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2';")
