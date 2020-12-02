@@ -123,10 +123,10 @@ GetPath = function(folder, file, extension) {
 #' @param verbose: Shows whether or not to log file path.
 #' @return Imported csv file as a table.
 ImportCSV = function(folder, file, ext = "csv", separator = "|", rows = FALSE, verbose = FALSE) {
-    row.names = ifelse(rows, 1, NULL)
     path = GetPath(folder, file, ext)
     if (verbose) Log(c("Importing ", path))
-    return(read.table(file = path, sep = separator, header = TRUE, row.names = row.names))
+    if (rows) return(read.table(file = path, sep = separator, header = TRUE, row.names = 1))
+    return(read.table(file = path, sep = separator, header = TRUE))
 }
 
 #' ExportCSV: Exports table to a CSV file.
