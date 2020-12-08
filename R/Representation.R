@@ -179,6 +179,6 @@ SelectFeatures = function(x, y, count) {
     if (count >= Count(x)) return(x)
     if (count < 1) count = 1
 
-    result = JMIM(x, y, count)
+    result = JMIM(x, unlist(y), count)
     return(x[, result$selection])
 }

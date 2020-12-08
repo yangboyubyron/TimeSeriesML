@@ -34,7 +34,7 @@ Limit = function(value, min = NA, max = NA) {
 #' @param strings: Strings in DateTime format.
 #' @param format: DateTime format (check ?strptime for more details).
 #' @return DateTime values.
-DateTime = function(strings, format) {
+DateTime = function(strings, format = '%F %T') {
     s = gsub(" ", "-", strings)
     f = gsub(" ", "-", format)
     return(as_datetime(s, format = f))

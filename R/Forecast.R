@@ -189,6 +189,91 @@ TestSVR = function(model, x, y, horizon, lookback, verbose = FALSE) {
     return(list(forecast = forecast, errors = errors))
 }
 
+#' OptimizeSVR: Optimized Support Vector Regression (SVR) training.
+#' Metaheuristic optimization of forecast model hyperparameters.
+#' @param x: Table of training input examples (one column per variable and one row per example).
+#' @param y: Table of training output examples (one column per variable and one row per example).
+#' @param horizon [1, number of examples): The length of forecast horizon (the number of time steps in the horizon).
+#' @param lookback (-number of examples, -1]: Vector of steps to make back in time in order to prepare past y values as forecast input.
+#' @param optimizer: One of available metaOpt algorithms.
+#' @param population (1, infinity]: Optimizer population size.
+#' @param generations (1, infinity]: Maximum number of optimization iterations.
+#' @param other: Other optimizer parameters.
+#' @param folder: Folder for csv export with best parameters and errors.
+#' @param name: Name of parameters and errors (csv file name prefix).
+#' @param verbose: Shows whether or not to log forecast errors and plot forecast results.
+#' @return Search result.
+OptimizeSVR = function(x,
+                       y,
+                       horizon,
+                       lookback,
+                       optimizer = "GOA",
+                       population = 10,
+                       generations = 20,
+                       other = list(),
+                       folder = NULL,
+                       name = NULL,
+                       verbose = FALSE) {
+    PrepareSet = function(x, y, horizon, lookback) {
+        x = as.data.frame(x)
+        y = as.data.frame(y)
+        train = 1:(Count(y) - horizon)
+        valid = (Count(y) - horizon - (max(lookback) - min(lookback))):Count(y)
+        return(list(x.train = as.data.frame(x[train,]),
+                    y.train = as.data.frame(y[train,]),
+                    x.valid = as.data.frame(x[valid,]),
+                    y.valid = as.data.frame(y[valid,])))
+    }
+    Evaluate = function(args) {
+        names(args) = c("nu", "gamma", "cost", "tolerance")
+        nu = args["nu"]
+        gamma = args["gamma"]
+        cost = args["cost"]
+        tolerance = args["tolerance"]
+
+        model = TrainSVR(set$x.train, set$y.train, horizon, lookback, nu, gamma, cost, tolerance, verbose)
+        output = model %>% TestSVR(set$x.valid, set$y.valid, horizon, lookback, verbose)
+
+        error = output$errors["RMSE[%]"]
+        if (is.null(best.error) || error < best.error) {
+            best.args <<- args
+            best.model <<- model
+            best.error <<- error
+            if (!is.null(folder)) {
+                ExportCSV(as.data.frame(best.args), folder, paste(name, "-args", sep = ""), rows = TRUE, separator = "=")
+                ExportCSV(as.data.frame(best.error), folder, paste(name, "-error", sep = ""), rows = TRUE, separator = "=")
+            }
+        }
+
+        return(error)
+    }
+
+    if (verbose) {
+        Log(c(optimizer, "-SVR optimization started (", generations, "x", population, " iterations)..."))
+        stopwatch = StopwatchStartNew()
+    }
+
+    optimal = NULL
+    best.args = NULL
+    best.model = NULL
+    best.error = NULL
+    set = PrepareSet(x, y, horizon, lookback)
+
+    # nu, gamma, cost, tolerance:
+    min = c(0, 0, 0.1, 0)
+    max = c(1, 1, 1, 0.1)
+    optimal = Optimize(Evaluate, min, max, optimizer, population, generations, other)
+
+    if (verbose) {
+        Log(c("SVR optimization finished (duration = ", StopwatchElapsedSeconds(stopwatch), " second(s))."))
+        print(optimal)
+        print(best.args)
+        print(best.error)
+    }
+
+    return(best.model)
+}
+
 #' TrainRNN: Trains Recurrent Neural Network (RNN).
 #' Creates Multiple-Input Multiple-Output (MIMO) RNN:
 #' Bidirectional Sequence to Sequence (S2S) Long Short-Term Memory (LSTM) with attention mechanism.
@@ -199,23 +284,15 @@ TestSVR = function(model, x, y, horizon, lookback, verbose = FALSE) {
 #' @param y: Table of training output examples (one column per variable and one row per example).
 #' @param horizon [1, number of examples): The length of forecast horizon (the number of time steps in the horizon).
 #' @param lookback (-number of examples, -1]: Vector of steps to make back in time in order to prepare past y values as forecast input.
-#' @param context [1, number of lookbacks): The size of S2S context.
-#' @param fnns [0, infinity]: The size of autoencoder that should be applied to S2S context,
-#'  given as the number of Fully-connected Feedforward Neural Network (FNN) layers in autoencoder.
-#' @param fnnm [1, 2*context]: The size of the FNN layer in the middle of the S2S context autoencoder.
-#' The sizes of other layers are gradually reduced from the edges of the autoencoder to the middle.
-#' @param cnns [0, infinity]: The number of Convolution Neural Network (CNN) layers to be prepended to S2S model.
+#' @param context (0, 1): The size of the S2S context relative to the number of lookbacks.
+#' @param fnns [0, infinity]: The number of fully-connected Feedforward Neural Network (FNN) layers inside S2S context autoencoder.
+#' @param fnnm (0, 1): The size of the FNN layer in the middle of the S2S context autoencoder relative to the edges of autoencoder.
+#' @param cnns [0, infinity]: The number of Convolution Neural Network (CNN) layers prepended to S2S model.
 #' @param cnnf [1, infinity]: The number of convolutional filters in each CNN layer.
 #' @param cnnk [2, number of lookbacks): The size of convolutional filters in each CNN layer.
 #' @param cnnp [2, number of lookbacks): The size of pools in average pooling layers within CNN layers.
 #' @param fnndrop [0, 1): Fraction of the units to drop after each FNN layer (FNN dropout).
 #' @param cnndrop [0, 1): Fraction of the units to drop after each CNN layer (CNN dropout).
-#' @param rnnregs: Vector of 8 RNN regularization factors in the following order:
-#' 1) L1 regularization factor for bias
-#' 2) L2 regularization factor for bias
-#' 3) L1 regularization factor for weights
-#' 4) L2 regularization factor for weights
-#' Use NULL or NA to skip any above.
 #' @param iterations (1, infinity]: Maximum number of training iterations.
 #' @param batch (1, infinity]: Batch size for each iteration.
 #' @param verbose: Shows whether or not to log and plot training details.
@@ -224,16 +301,15 @@ TrainRNN = function(x,
                     y,
                     horizon,
                     lookback,
-                    context = round(Count(lookback) * 0.75),
-                    fnns = 5,
-                    fnnm = round(context * 0.75),
+                    context = 0.7,
+                    fnns = round(horizon / 3),
+                    fnnm = 0.3,
                     cnns = 1,
                     cnnf = 512,
                     cnnk = 3,
                     cnnp = 3,
-                    fnndrop = 0.4,
-                    cnndrop = 0.4,
-                    rnnregs = rep(1, 4),
+                    fnndrop = 0.5,
+                    cnndrop = 0.5,
                     iterations = 50,
                     batch = 1024,
                     verbose = FALSE) {
@@ -241,9 +317,9 @@ TrainRNN = function(x,
         x <<- as.data.frame(x)
         y <<- as.data.frame(y)
         lookback <<- as.vector(lookback)
-        context <<- Limit(context, 1, Count(lookback) - 1)
+        context <<- Limit(context, 0.1, 0.9)
         fnns <<- Limit(fnns, min = 0)
-        fnnm <<- Limit(fnnm, 1, 2 * context - 1)
+        fnnm <<- Limit(fnnm, 0.1, 0.9)
         cnnf <<- Limit(cnnf, min = 1)
         cnnk <<- Limit(cnnk, 2, Count(lookback) - 1)
         cnnp <<- Limit(cnnk, 2, Count(lookback) - 1)
@@ -264,8 +340,7 @@ TrainRNN = function(x,
                   "CNN kernel",
                   "CNN pool",
                   "FNN dropout",
-                  "CNN dropout",
-                  "RNN regularizers")
+                  "CNN dropout")
         values = c(paste(ncol(y)),
                    ncol(x),
                    horizon,
@@ -278,22 +353,16 @@ TrainRNN = function(x,
                    cnnk,
                    cnnp,
                    fnndrop,
-                   cnndrop,
-                   paste(rnnregs, collapse = ", "))
+                   cnndrop)
         names(values) = names
         print(values)
     }
 
-    Regularizer = function(l1, l2) {
-        Has = function(l) return(!is.null(l) && !is.na(l))
-        if (Has(l1) && Has(l2)) return(regularizer_l1_l2(l1 = l1, l2 = l2))
-        if (Has(l1)) return(regularizer_l1(l1))
-        if (Has(l2)) return(regularizer_l2(l2))
-        return(NULL)
-    }
+    AbsInt = function(rel, max) return(Limit(round(rel * max), 1, max - 1))
+
     FNN = function(input, units, name, id) {
-        name.feed = paste(name, "FNN", id, sep = "")
-        name.drop = paste(name, "FNN", id, "_dropout", sep = "")
+        name.feed = paste(name, "_FNN", id, sep = "")
+        name.drop = paste(name, "_FNN", id, "_dropout", sep = "")
         out = input %>%
               layer_dense(units = units,
                           activation = "tanh",
@@ -301,10 +370,10 @@ TrainRNN = function(x,
               layer_dropout(fnndrop, name = name.drop)
         return(out)
     }
-    CNN = function(input, id) {
-        name.conv = paste("CNN", id, "_convolution", sep = "")
-        name.pool = paste("CNN", id, "_pooling", sep = "")
-        name.drop = paste("CNN", id, "_dropout", sep = "")
+    CNN = function(input, name, id) {
+        name.conv = paste(name, "_CNN", id, "_convolution", sep = "")
+        name.pool = paste(name, "_CNN", id, "_pooling", sep = "")
+        name.drop = paste(name, "_CNN", id, "_dropout", sep = "")
         out = input %>%
               layer_conv_1d(filters = cnnf,
                             kernel_size = cnnk,
@@ -315,12 +384,10 @@ TrainRNN = function(x,
               layer_dropout(cnndrop, name = name.drop)
         return(out)
     }
-    LSTM = function(units, regs = c(), states = FALSE, sequences = FALSE, name = NULL) {
+    LSTM = function(units, states = FALSE, sequences = FALSE, name = NULL) {
         return(layer_lstm(units = units,
                           return_state = states,
                           return_sequences = sequences,
-                          bias_regularizer = Regularizer(regs[1], regs[2]),
-                          kernel_regularizer = Regularizer(regs[3], regs[4]),
                           name = name,
                           # GPU requirement:
                           activation = "tanh",
@@ -329,14 +396,15 @@ TrainRNN = function(x,
                           use_bias = TRUE,
                           unroll = FALSE))
     }
-    AutoEncoder = function(input, min, max, count, name) {
-        AEUnits = function() {
-            if (count <= 0) return(c())
-            if (count == 1) return(c(max))
-            if (count == 2) return(c(max, max))
+
+    AutoEncoder = function(input, edges, middle, depth, name) {
+        FNNUnits = function(min, max, depth) {
+            if (depth <= 0) return(c())
+            if (depth == 1) return(c(max))
+            if (depth == 2) return(c(max, max))
 
             units = c(max)
-            half = (count - 1) / 2
+            half = (depth - 1) / 2
             step = floor((max - min) / floor(half))
             for(i in 1:floor(half)) {
                 units = c(units, Limit(units[i] - step, min, max))
@@ -346,49 +414,57 @@ TrainRNN = function(x,
             return(units)
         }
 
-        units = AEUnits()
+        units = FNNUnits(AbsInt(middle, edges), edges, depth)
         if (Count(units) == 0) return(input)
         for(i in 1:Count(units)) input = input %>% FNN(units[i], name, i)
         return(input)
     }
-
-    Input = function(variables, steps, name) return(layer_input(shape = list(steps, variables), name = name))
-    InputPast = function() return(Input(ncol(y), Count(lookback), "input_past"))
-    InputFuture = function() return(Input(ncol(x), horizon, "input_future"))
-    Output = function(model) return(layer_dense(model, units = ncol(y), name = "output"))
-    Filter = function(input) {
-        if (cnns == 0) return(input)
-        for (i in 1:cnns) input = input %>% CNN(i)
+    DeepCNN = function(input, depth, name) {
+        if (depth == 0) return(input)
+        for (i in 1:depth) input = input %>% CNN(name, i)
         return(input)
     }
-    Encode = function(encoder.input) {
-        encoder = LSTM(context, rnnregs[1:4], states = TRUE)
-        encoded = encoder.input %>% bidirectional(encoder, name = "LSTM_encoder")
-        return(encoded)
+    S2S = function(past, future) {
+        Encode = function(encoder.input, units) {
+            encoder = LSTM(units, states = TRUE)
+            encoded = encoder.input %>% bidirectional(encoder, name = "LSTM_encoder")
+            return(encoded)
+        }
+        Decode = function(encoded, units, decoder.input) {
+            EncodedOutput = function() return(encoded[1])
+            EncodedStates = function() {
+                # Extracting and autoencoding 2 hidden and 2 cell states from bidirectional encoder:
+                h = layer_concatenate(encoded[c(2, 4)], name = "S2S_hState")
+                c = layer_concatenate(encoded[c(3, 5)], name = "S2S_cState")
+                h = h %>% AutoEncoder(units, fnnm, fnns, name = "S2S_hState")
+                c = c %>% AutoEncoder(units, fnnm, fnns, name = "S2S_cState")
+                return(list(h, c))
+            }
+
+            decoder = LSTM(units, sequences = TRUE, name = "LSTM_decoder")
+            decoded = decoder.input %>% decoder(initial_state = EncodedStates())
+            attention = layer_attention(list(decoded, EncodedOutput()), name = "S2S_attention")
+            output = layer_concatenate(list(decoded, attention), name = "S2S_output")
+            return(output)
+        }
+
+        past = past %>% DeepCNN(cnns, "Past")
+        units = AbsInt(context, Count(lookback))
+        return(Encode(past, units) %>% Decode(2 * units, future))
     }
-    EncodedOutput = function(encoded) return(encoded[1])
-    EncodedStates = function(encoded) {
-        # Extracting and autoencoding 2 hidden and 2 cell states from bidirectional encoder:
-        h = layer_concatenate(encoded[c(2, 4)], name = "S2S_hState") %>% AutoEncoder(fnnm, 2 * context, fnns, name = "S2S_hState_")
-        c = layer_concatenate(encoded[c(3, 5)], name = "S2S_cState") %>% AutoEncoder(fnnm, 2 * context, fnns, name = "S2S_cState_")
-        return(list(h, c))
-    }
-    Decode = function(encoded, decoder.input) {
-        # Decoding bidirectional encoder context:
-        decoder = LSTM(2 * context, sequences = TRUE, name = "LSTM_decoder")
-        decoded = decoder.input %>% decoder(initial_state = EncodedStates(encoded))
-        attention = layer_attention(list(decoded, EncodedOutput(encoded)), name = "S2S_attention")
-        output = layer_concatenate(list(decoded, attention), name = "S2S_output")
-        return(output)
-    }
-    S2S = function() {
+
+    Create = function() {
+        Input = function(variables, steps, name) return(layer_input(shape = list(steps, variables), name = name))
+        InputPast = function() return(Input(ncol(y), Count(lookback), "input_past"))
+        InputFuture = function() return(Input(ncol(x), horizon, "input_future"))
+        Output = function(model) return(layer_dense(model, units = ncol(y), name = "output"))
+
         past = InputPast()
         future = InputFuture()
-        output = past %>% Filter() %>% Encode() %>% Decode(future) %>% Output()
+        output = S2S(past, future) %>% Output()
         model = keras_model(inputs = list(past, future), outputs = output)
         return(model)
     }
-
     Compile = function(model) {
         CVRMSE = function(y_true, y_pred) {
             RMSE = k_sqrt(metric_mean_squared_error(y_true, y_pred))
@@ -407,7 +483,7 @@ TrainRNN = function(x,
         PrintParams()
     }
 
-    model = S2S() %>% Compile() %>% UpdateRNN(x, y, horizon, lookback, iterations, batch, verbose)
+    model = Create() %>% Compile() %>% UpdateRNN(x, y, horizon, lookback, iterations, batch, verbose)
 
     if (verbose) Log(c("RNN training finished (duration = ", StopwatchElapsedSeconds(stopwatch), " second(s))."))
     return(model)
@@ -475,47 +551,36 @@ SaveRNN = function(model, folder, file) model %>% save_model_hdf5(GetPath(folder
 #' @return Trained RNN forecast model.
 LoadRNN = function(folder, file) return(load_model_hdf5(GetPath(folder, file, 'rnn')))
 
-#' TrainForecast: Optimized time series forecast training.
+#' OptimizeRNN: Optimized Recurrent Neural Network (RNN) training.
 #' Metaheuristic optimization of forecast model hyperparameters.
 #' @param x: Table of training input examples (one column per variable and one row per example).
 #' @param y: Table of training output examples (one column per variable and one row per example).
 #' @param horizon [1, number of examples): The length of forecast horizon (the number of time steps in the horizon).
 #' @param lookback (-number of examples, -1]: Vector of steps to make back in time in order to prepare past y values as forecast input.
-#' @param type: One of available forecast models:
-#' 1) "RNN": Recurrent Neural Network
-#' 2) "SVR": Support Vector Regression
 #' @param optimizer: One of available metaOpt algorithms.
 #' @param population (1, infinity]: Optimizer population size.
 #' @param generations (1, infinity]: Maximum number of optimization iterations.
-#' @param iterations (1, infinity]: Maximum number of training iterations (used only by RNN).
-#' @param batch (1, infinity]: Batch size for each iteration (used only by RNN).
+#' @param iterations (1, infinity]: Maximum number of training iterations.
+#' @param batch (1, infinity]: Batch size for each iteration.
 #' @param other: Other optimizer parameters.
 #' @param folder: Folder for csv export with best parameters and errors.
 #' @param name: Name of parameters and errors (csv file name prefix).
 #' @param verbose: Shows whether or not to log forecast errors and plot forecast results.
 #' @return Search result.
-TrainForecast = function(x,
-                         y,
-                         horizon,
-                         lookback,
-                         type = "RNN",
-                         optimizer = "GOA",
-                         population = 10,
-                         generations = 20,
-                         iterations = 20,
-                         batch = 1024,
-                         other = list(),
-                         folder = NULL,
-                         name = NULL,
-                         verbose = FALSE) {
-    PrintParams = function() {
-        p = c("optimizer" = optimizer,
-              "population" = population,
-              "generations" = generations)
-        p = c(p, unlist(other))
-        print(p)
-    }
-    PrepareSet = function(x, y, horizon, lookback) {
+OptimizeRNN = function(x,
+                       y,
+                       horizon,
+                       lookback,
+                       optimizer = "GOA",
+                       population = 10,
+                       generations = 20,
+                       iterations = 20,
+                       batch = 1024,
+                       other = list(),
+                       folder = NULL,
+                       name = NULL,
+                       verbose = FALSE) {
+    Prepare = function(x, y, horizon, lookback) {
         x = as.data.frame(x)
         y = as.data.frame(y)
         train = 1:(Count(y) - horizon)
@@ -525,65 +590,25 @@ TrainForecast = function(x,
                     x.valid = as.data.frame(x[valid,]),
                     y.valid = as.data.frame(y[valid,])))
     }
-    OptimizeSVR = function() {
-        # nu, gamma, cost, tolerance:
-        min = c(0, 0, 0.1, 0)
-        max = c(1, 1, 1, 0.1)
-        optimal = Optimize(EvaluateSVR, min, max, optimizer, population, generations, other)
-    }
-    EvaluateSVR = function(args) {
-        names(args) = c("nu", "gamma", "cost", "tolerance")
-        nu = args["nu"]
-        gamma = args["gamma"]
-        cost = args["cost"]
-        tolerance = args["tolerance"]
-
-        model = TrainSVR(set$x.train, set$y.train, horizon, lookback, nu, gamma, cost, tolerance, verbose)
-        output = model %>% TestSVR(set$x.valid, set$y.valid, horizon, lookback, verbose)
-        return(Evaluate(args, model, output))
-    }
-    OptimizeRNN = function() {
-        lookbacks = Count(lookback)
-        # context:
-        min = c(0.5 * lookbacks)
-        max = c(0.9 * lookbacks)
-        # fnns and fnnm:
-        min = c(min, c(0, 0.5 * lookbacks))
-        max = c(max, c(9, 1.5 * lookbacks))
-        # cnns, cnnf, cnnk and cnnp:
-        min = c(min, c(0, 2 * lookbacks, 2, 2))
-        max = c(max, c(5, 4 * lookbacks, 7, 7))
-        # fnndrop and cnndrop:
-        min = c(min, rep(0.1, 2))
-        max = c(max, rep(0.7, 2))
-        # rnnregs:
-        min = c(min, rep(0, 4))
-        max = c(max, rep(2, 4))
-        optimal = Optimize(EvaluateRNN, min, max, optimizer, population, generations, other)
-    }
-    EvaluateRNN = function(args) {
-        context = round(args[1])
+    Evaluate = function(args) {
+        context = args[1]
         fnns = round(args[2])
-        fnnm = round(args[3])
+        fnnm = args[3]
         cnns = round(args[4])
         cnnf = round(args[5])
         cnnk = round(args[6])
         cnnp = round(args[7])
         fnndrop = args[8]
         cnndrop = args[9]
-        rnnregs = args[10:13]
 
         args = c(context, fnns, fnnm, cnns, cnnf, cnnk, cnnp, fnndrop, cnndrop)
-        args = c(args, paste(rnnregs, collapse = ","))
-        names(args) = c("context", "fnns", "fnnm", "cnns", "cnnf", "cnnk", "cnnp", "fnndrop", "cnndrop", "rnnregs")
+        names(args) = c("context", "fnns", "fnnm", "cnns", "cnnf", "cnnk", "cnnp", "fnndrop", "cnndrop")
 
         model = TrainRNN(set$x.train, set$y.train, horizon, lookback,
-                         context, fnns, fnnm, cnns, cnnf, cnnk, cnnp, fnndrop, cnndrop, rnnregs,
+                         context, fnns, fnnm, cnns, cnnf, cnnk, cnnp, fnndrop, cnndrop,
                          iterations, batch, verbose)
         output = model %>% TestRNN(set$x.valid, set$y.valid, horizon, lookback, verbose)
-        return(Evaluate(args, model, output))
-    }
-    Evaluate = function(args, model, output) {
+
         error = output$errors["RMSE[%]"]
         if (is.null(best.error) || error < best.error) {
             best.args <<- args
@@ -602,52 +627,28 @@ TrainForecast = function(x,
     }
 
     if (verbose) {
-        Log(c(type, " optimization started..."))
+        Log(c(optimizer, "-RNN optimization started (", generations, "x", population, " iterations)..."))
         stopwatch = StopwatchStartNew()
-        PrintParams()
     }
 
-    optimal = NULL
     best.args = NULL
     best.model = NULL
     best.error = NULL
-    set = PrepareSet(x, y, horizon, lookback)
-    if (type == "SVR") {
-        OptimizeSVR()
-    } else {
-        OptimizeRNN()
-    }
+    set = Prepare(x, y, horizon, lookback)
+
+    # context, fnns, fnnm, cnns, cnnf, cnnk cnnp, fnndrop cnndrop:
+    min = c(0.4, 0, 0.2, 0, 128, 2, 2, 0.2, 0.2)
+    max = c(0.8, 9, 0.8, 5, 768, 5, 5, 0.6, 0.6)
+    optimal = Optimize(Evaluate, min, max, optimizer, population, generations, other)
 
     if (verbose) {
-        Log(c(type, " optimization finished (duration = ", StopwatchElapsedSeconds(stopwatch), " second(s))."))
+        Log(c("RNN optimization finished (duration = ", StopwatchElapsedSeconds(stopwatch), " second(s))."))
         print(optimal)
         print(best.args)
         print(best.error)
     }
 
     return(best.model)
-}
-
-#' TestForecast: Optimized time series forecast testing.
-#' NOTE: The number of input and output examples must be the same (use NA to populate missing values).
-#' @param model: Trained forecast model.
-#' @param x: Table of future values for test input (one column per variable and one row per example).
-#' @param y: Table of past values for test output (one column per variable and one row per example).
-#' @param horizon [1, number of examples): The length of forecast horizon (the number of time steps in the horizon).
-#' @param lookback (-number of examples, -1]: Vector of steps to make back in time in order to prepare past y values as forecast input.
-#' @param type: One of available types of trained forecast model:
-#' 1) "RNN": Recurrent Neural Network
-#' 2) "SVR": Support Vector Regression
-#' @param verbose: Shows whether or not to log forecast errors and plot forecast results.
-#' @return A list containing:
-#' 1) forecast: Time series forecast.
-#' 2) errors: Forecast errors.
-TestForecast = function(model, x, y, horizon, lookback, type, verbose = FALSE) {
-    if (type == "SVR") {
-        return(TestSVR(model, x, y, horizon, lookback, verbose))
-    } else {
-        return(TestRNN(model, x, y, horizon, lookback, verbose))
-    }
 }
 
 #' EvaluateForecast: Calculates forecast errors.
