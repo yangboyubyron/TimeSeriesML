@@ -103,6 +103,69 @@ Union = function(rows1, rows2, colnames = NULL, rownames = NULL) {
     return(table)
 }
 
+#' Slide: Slides across table rows.
+#' @param table: Data frame or matrix.
+#' @param slider: Vector of relative row indexes.
+#' @param trim: Shows whether or not to remove rows with non-existing values.
+#' @return Array with 3 dimensions: examples (table rows), steps (slider) and variables (table columns).
+Slide = function(table, slider, trim = TRUE) {
+    GetNames = function(prefix, indexes) return(paste(prefix, indexes, sep = ""))
+    GetExampleNames = function(table) return(GetNames("E", 1:Count(table)))
+    GetVariableNames = function(table) return(GetNames("V", 1:ncol(table)))
+    GetStepNames = function(steps) return(GetNames("S", steps))
+    Missing = function(count) return(rep(NA, count))
+    Backward = function(values, count) {
+        selected = 1:(Count(values) - count)
+        return(c(Missing(count), values[selected]))
+    }
+    Forward = function(values, count) {
+        selected = (count + 1):Count(values)
+        return(c(values[selected], Missing(count)))
+    }
+    Move = function(values, step) {
+        if (step < 0) return(Backward(values, - step))
+        if (step > 0) return(Forward(values, step))
+        return(values)
+    }
+    SlideOne = function(values, steps) {
+        windows = c()
+        for (i in 1:Count(steps)) {
+            window = Move(values, steps[i])
+            windows = Join(windows, window)
+        }
+        if (trim) {
+            windows = na.omit(windows)
+        }
+
+        return(as.matrix(windows))
+    }
+    SlideAll = function(table, slider) {
+        example.count = NULL # Defined below.
+        example.names = NULL # Defined below.
+        variable.count = ncol(table)
+        variable.names = GetVariableNames(table)
+        step.count = Count(slider)
+        step.names = GetStepNames(slider)
+
+        result = c()
+        for (v in 1:variable.count) {
+            windows = SlideOne(table[, v], slider)
+            result = c(result, windows)
+            example.count = Count(windows)
+            example.names = GetExampleNames(windows)
+        }
+
+        if (example.count == 0) return(array())
+
+        dim.count = list(example.count, step.count, variable.count)
+        dim.names = list(example.names, step.names, variable.names)
+        return(array(result, dim = dim.count, dimnames = dim.names))
+    }
+
+    if (Count(table) == 0 || Count(slider) == 0) return(array())
+    return(SlideAll(as.data.frame(table), unlist(slider)))
+}
+
 #' GetPath: Composes allowed file path.
 #' @param folder: Folder name.
 #' @param file: File name.

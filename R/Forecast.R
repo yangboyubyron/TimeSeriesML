@@ -12,62 +12,6 @@
 #' 1) input: Input dataset (past y values combined with future x values).
 #' 2) output: Output dataset (future y values).
 Tensor = function(x, y, horizon, lookback, type = "MIMO") {
-    GetNames = function(prefix, indexes) return(paste(prefix, indexes, sep = ""))
-    GetExampleNames = function(table) return(GetNames("E", 1:Count(table)))
-    GetVariableNames = function(table) return(GetNames("V", 1:ncol(table)))
-    GetStepNames = function(steps) return(GetNames("S", steps))
-    Missing = function(count) return(rep(NA, count))
-    Backward = function(values, count) {
-        selected = 1:(Count(values) - count)
-        return(c(Missing(count), values[selected]))
-    }
-    Forward = function(values, count) {
-        selected = (count + 1):Count(values)
-        return(c(values[selected], Missing(count)))
-    }
-    Move = function(values, step) {
-        if (step < 0) return(Backward(values, - step))
-        if (step > 0) return(Forward(values, step))
-        return(values)
-    }
-    SlideOne = function(values, steps) {
-        table = c()
-        for (i in 1:Count(steps)) {
-            step = steps[i]
-            column = Move(values, step)
-            table = Join(table, column)
-        }
-
-        return(table)
-    }
-    SlideAll = function(table, slider) {
-        if (Count(table) == 0 || Count(slider) == 0) return(array())
-        table = as.data.frame(table)
-        slider = as.vector(slider)
-
-        example.count = NULL # Defined below.
-        example.names = NULL # Defined below.
-        variable.count = ncol(table)
-        variable.names = GetVariableNames(table)
-        step.count = Count(slider)
-        step.names = GetStepNames(slider)
-
-        result = c()
-        for (v in 1:variable.count) {
-            windows = SlideOne(table[, v], slider)
-            cleaned = as.matrix(na.omit(windows))
-            result = c(result, cleaned)
-            example.count = Count(cleaned)
-            example.names = GetExampleNames(cleaned)
-        }
-
-        if (example.count == 0) return(array())
-
-        dim.count = list(example.count, step.count, variable.count)
-        dim.names = list(example.names, step.names, variable.names)
-        return(array(result, dim = dim.count, dimnames = dim.names))
-    }
-
     x = as.data.frame(x)
     y = as.data.frame(y)
     lookback = as.vector(lookback)
@@ -75,14 +19,14 @@ Tensor = function(x, y, horizon, lookback, type = "MIMO") {
     forecast.rows = (max(lookback) - min(lookback) + 1):total.length
     if (type == "rec") {
         lookback.rows = 1:(total.length - 1)
-        input.past = SlideAll(y[lookback.rows,], lookback + 1)
-        input.future = SlideAll(x[forecast.rows,], 1)
-        output = SlideAll(y[forecast.rows,], 1)
+        input.past = Slide(y[lookback.rows,], lookback + 1)
+        input.future = Slide(x[forecast.rows,], 1)
+        output = Slide(y[forecast.rows,], 1)
     } else {
         lookback.rows = 1:(total.length - horizon)
-        input.past = SlideAll(y[lookback.rows,], lookback + 1)
-        input.future = SlideAll(x[forecast.rows,], 1:horizon)
-        output = SlideAll(y[forecast.rows,], 1:horizon)
+        input.past = Slide(y[lookback.rows,], lookback + 1)
+        input.future = Slide(x[forecast.rows,], 1:horizon)
+        output = Slide(y[forecast.rows,], 1:horizon)
     }
 
     input = list(input.past, input.future)

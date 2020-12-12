@@ -14,6 +14,7 @@ suppressWarnings(suppressMessages({
                  "Hmisc",
                  "caret",
                  "lubridate",
+                 "akmedoids",
                  "clusterSim",
                  "fastcluster",
                  "ClusterR",

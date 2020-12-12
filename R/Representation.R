@@ -170,15 +170,20 @@ ExtractFeatures = function(profiles, percentage = 95) {
     return(as.data.frame(result$x[, 1:reduced]))
 }
 
-#' SelectFeatures: Feature selection based on Joint Mutual Information Maximisation (JMIM).
+#' SelectFeatures: Filter-based Feature Selection
+#' Filtering is based on Joint Mutual Information Maximisation (JMIM) and
+#' elbow point method, used to determine the maximum curvature in JMIM score.
 #' @param x: Table of inputs (one column per variable and one row per example).
 #' @param y: Table of outputs (one column per variable and one row per example).
-#' @param count: Number of features to select.
 #' @return Table of inputs with selected features.
-SelectFeatures = function(x, y, count) {
-    if (count >= Count(x)) return(x)
-    if (count < 1) count = 1
+SelectFeatures = function(x, y) {
+    x = as.data.frame(x)
+    if (Count(colnames(x)) == 0) {
+        colnames(x) = paste("V", 1:ncol(x), sep = "")
+    }
 
-    result = JMIM(x, unlist(y), count)
-    return(x[, result$selection])
+    score = JMIM(x, unlist(y), ncol(x))$score
+    elbow = elbowPoint(1:Count(score), score)$x
+    selection = names(score[1:round(elbow)])
+    return(x[, selection])
 }
