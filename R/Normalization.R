@@ -31,7 +31,7 @@ NormParam = function(data, type = "Z", by = "") {
     param = c()
     if (by == "row") {
         for (i in 1:nrow(data)) {
-            values = unlist(data[i,])
+            values = unlist(na.omit(data[i,]))
             param = Union(param, Apply(values, type))
         }
 
@@ -39,13 +39,13 @@ NormParam = function(data, type = "Z", by = "") {
     }
     else if (by == "col") {
         for (i in 1:ncol(data)) {
-            values = unlist(data[, i])
+            values = unlist(na.omit(data[, i]))
             param = Join(param, Apply(values, type))
         }
 
         colnames(param) = colnames(data)
     } else {
-        values = unlist(data)
+        values = unlist(na.omit(data))
         param = Apply(values, type)
     }
 

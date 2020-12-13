@@ -124,6 +124,12 @@ Decompose = function(profile, count = 10, algorithm = "VMD") {
 #' 3) "SSA": Singular Spectrum Analysis
 #' @return Denoised profiles.
 Denoise = function(profiles, count = 10, algorithm = "VMD") {
+    Sum = function(components) {
+        count = Count(components)
+        if (count < 2) return(components)
+        return(t(colSums(components[1:(count - 1),])))
+    }
+
     profiles.rowcount = Count(profiles)
     Log(c("Denoising started (", profiles.rowcount, " profiles, ", count, " components, ", algorithm, ")... "))
     stopwatch = StopwatchStartNew()
@@ -132,16 +138,10 @@ Denoise = function(profiles, count = 10, algorithm = "VMD") {
     for (row in 1:profiles.rowcount) {
         profile = profiles[row,]
         components = Decompose(profile, count, algorithm)
-        components.rowcount = Count(components)
-
-        denoised = components
-        if (components.rowcount > 1) {
-            denoised = colSums(components[1:(components.rowcount - 1),])
-        }
-
-        result = Union(result, denoised)
+        result = Union(result, Sum(components))
     }
 
+    colnames(result) = colnames(profiles)
     row.names(result) = row.names(profiles)
     Log(c("Denoising finished (duration = ", StopwatchElapsedSeconds(stopwatch), " second(s))."))
     return(result)
@@ -174,16 +174,15 @@ ExtractFeatures = function(profiles, percentage = 95) {
 #' Filtering is based on Joint Mutual Information Maximisation (JMIM) and
 #' elbow point method, used to determine the maximum curvature in JMIM score.
 #' @param x: Table of inputs (one column per variable and one row per example).
-#' @param y: Table of outputs (one column per variable and one row per example).
+#' @param y: Table of outputs (one column for one variable and one row per example).
+#' @param focus: Rows to focus on while filtering.
 #' @return Table of inputs with selected features.
-SelectFeatures = function(x, y) {
-    x = as.data.frame(x)
-    if (Count(colnames(x)) == 0) {
-        colnames(x) = paste("V", 1:ncol(x), sep = "")
-    }
-
-    score = JMIM(x, unlist(y), ncol(x))$score
+SelectFeatures = function(x, y, focus = 1:Count(x)) {
+    xy = Trim(Subset(Join(x, y, rownames=row.names(x)), rows = focus))
+    fx = Subset(xy, cols = 1:(ncol(xy)-1))
+    fy = Subset(xy, cols = ncol(xy))
+    score = sort(JMIM(fx, unlist(fy), ncol(fx))$score, decreasing = TRUE)
     elbow = elbowPoint(1:Count(score), score)$x
     selection = names(score[1:round(elbow)])
-    return(x[, selection])
+    return(Subset(x, cols = selection))
 }

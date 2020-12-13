@@ -1,10 +1,102 @@
+# TSFDS: Time Series Forecast Data Set
+#' Splits data into one training set and one or more test data sets.
+#' @param data: Table of examples (one column per variable and one row per example).
+#' @param col_time: Timestamp column index.
+#' @param col_x_required: Required input column indexes.
+#' @param col_x_optional: Optional input column indexes.
+#' @param col_y: Output column indexes.
+#' @param splitter: Row that splits training from test set (last training set row).
+#' @param horizon: The length of forecast horizon (the number of time steps in the horizon).
+#' @param lookback: The number of steps to look back in time to prepare past y values as forecast input.
+#' @param uncertainty: The number of rows to shift back and forth while matching optional inputs with outputs.
+#' @param encoding: One of available time encoding types:
+#' 1) "polar": Polar coordinate system.
+#' 2) "onehot": One-Hot encoding.
+#' @param normalization: One of available normalization types:
+#' 1) "AM": Abs-Max normalization
+#' 2) "MM": Min-Max normalization
+#' 3) "AVG": Divide-by-average normalization
+#' 4) "Z": Z-normalization
+#' @return A list with two members:
+#' 1) train: A list with training data:
+#' 1.1) x: Table with normalized training inputs.
+#' 1.2) y: Table with normalized training outputs.
+#' 1.3) norm: Normalization parameters (applied to both training and test data).
+#' 2) test: A list with test data split by horizon, where each member contains:
+#' 2.1) x: Table with normalized test inputs.
+#' 2.2) y: Table with normalized test outputs.
+TSFDS = function(data,
+                 col_time,
+                 col_x_required,
+                 col_x_optional,
+                 col_y,
+                 splitter,
+                 horizon,
+                 lookback,
+                 uncertainty = 1,
+                 encoding = 'onehot',
+                 normalization = 'MM') {
+    PrepareSet = function() {
+        Get = function(cols) return(Subset(data, cols = cols))
+        Time = function() return(EncodeTime(DateTime(data[,col_time]),type=encoding))
+        RequiredX = function() return(Get(col_x_required))
+        OptionalX = function() {
+            p = Get(col_x_optional)
+            slider = -uncertainty:uncertainty
+            candidates = as.data.frame(Slide(p, slider, FALSE))
+            colnames(candidates) = Combine(colnames(p), slider)
+            return(candidates)
+        }
+
+        y = Get(col_y)
+        x.base = Join(Time(), RequiredX())
+        x.opt = SelectFeatures(OptionalX(), y, TrainRows())
+        x = Join(x.base, x.opt)
+        return(list(x = x, y = y))
+    }
+    NormParams = function(x, y) {
+        nx = NormParam(x, normalization, 'col')
+        ny = NormParam(y, normalization, 'col')
+        return(list(x = nx, y = ny))
+    }
+    TrainRows = function() return(1:splitter)
+    TrainSubset = function(x, y) {
+        x = Subset(x, rows=TrainRows())
+        y = Subset(y, rows=TrainRows())
+        norm = NormParams(x, y)
+        x = Norm(x, norm$x)
+        y = Norm(y, norm$y)
+        return(list(x = x, y = y, norm = norm))
+    }
+    TestRows = function(splitter) return((splitter - lookback + 1):(splitter + horizon))
+    TestSubsets = function(x, y, norm) {
+        TestSubset = function(rows) {
+            x = Norm(Subset(x, rows=rows), norm$x)
+            y = Norm(Subset(y, rows=rows), norm$y)
+            return(list(x = x, y = y))
+        }
+
+        test = list()
+        for(i in 1:floor((Count(y)-splitter-uncertainty)/horizon)) {
+            test[[i]] = TestSubset(TestRows(splitter+(i-1)*horizon))
+        }
+
+        return(test)
+    }
+
+    set = PrepareSet()
+    train = TrainSubset(set$x, set$y)
+    test = TestSubsets(set$x, set$y, train$norm)
+    return(list(train = train, test = test))
+}
+
 #' Tensor: Creates n-dimensional dataset.
 #' Creates a dataset with inputs and outputs for training or testing forecast model.
 #' NOTE: The number of input and output examples must be the same (use NA to populate missing values).
 #' @param x: Table of training input examples (one column per variable and one row per example).
 #' @param y: Table of training output examples (one column per variable and one row per example).
-#' @param horizon [1, number of examples): The length of forecast horizon (the number of time steps in the horizon).
-#' @param lookback (-number of examples, -1]: Vector of steps to make back in time in order to prepare past y values as forecast input.
+#' @param horizon: The length of forecast horizon (the number of time steps in the horizon).
+#' @param lookback: The number of steps to look back in time to prepare past y values as forecast input.
 #' @param type: One of available tensor types:
 #' 1) "MIMO": Tensor for Multiple-Input Multiple-Output forecast.
 #' 2) "rec": Tensor for recursive (iterative) forecast.
@@ -14,22 +106,21 @@
 Tensor = function(x, y, horizon, lookback, type = "MIMO") {
     x = as.data.frame(x)
     y = as.data.frame(y)
-    lookback = as.vector(lookback)
-    total.length = min(Count(x), Count(y))
-    forecast.rows = (max(lookback) - min(lookback) + 1):total.length
+    count = min(Count(x), Count(y))
+    future = lookback:count
+    backward = (1-lookback):0
     if (type == "rec") {
-        lookback.rows = 1:(total.length - 1)
-        input.past = Slide(y[lookback.rows,], lookback + 1)
-        input.future = Slide(x[forecast.rows,], 1)
-        output = Slide(y[forecast.rows,], 1)
+        past = 1:(count - 1)
+        forward = 1
     } else {
-        lookback.rows = 1:(total.length - horizon)
-        input.past = Slide(y[lookback.rows,], lookback + 1)
-        input.future = Slide(x[forecast.rows,], 1:horizon)
-        output = Slide(y[forecast.rows,], 1:horizon)
+        past = 1:(count - horizon)
+        forward = 1:horizon
     }
 
+    input.past = Slide(y[past,], backward)
+    input.future = Slide(x[future,], forward)
     input = list(input.past, input.future)
+    output = Slide(y[future,], forward)
     return(list(input = input, output = output))
 }
 
@@ -39,8 +130,8 @@ Tensor = function(x, y, horizon, lookback, type = "MIMO") {
 #' NOTE: The number of input and output examples must be the same (use NA to populate missing values).
 #' @param x: Table of training inputs (one column per variable and one row per example).
 #' @param y: Table of training outputs (one column for only one variable and one row per example).
-#' @param horizon [1, number of examples): The length of forecast horizon (the number of time steps in the horizon).
-#' @param lookback (-number of examples, -1]: Vector of steps to make back in time in order to prepare past y values as forecast input.
+#' @param horizon (0, number of examples): The length of forecast horizon (the number of time steps in the horizon).
+#' @param lookback (0, number of examples): The number of steps to look back in time to prepare past y values as forecast input.
 #' @param nu (0, 1]: Parameter nu controls the number of support vectors and training errors for nu-SVR as follows:
 #' 1) small nu leads to great sensitivity to margins around hyperplanes and may cause overfitting,
 #' 2) large nu leads to small sensitivity to margins around hyperplanes and may cause underfitting.
@@ -58,7 +149,7 @@ Tensor = function(x, y, horizon, lookback, type = "MIMO") {
 #' 2) Large tolerance decreases difficulty in finding an optimal solution and may cause underfitting.
 #' @param verbose: Shows whether or not to log training details.
 #' @return SVR model.
-TrainSVR = function(x, y, horizon, lookback, nu = 0.01, gamma = 0.001, cost = 1, tolerance = 0.01, verbose = FALSE) {
+TrainSVR = function(x, y, horizon, lookback = 2*horizon, nu = 0.01, gamma = 0.001, cost = 1, tolerance = 0.01, verbose = FALSE) {
     LimitParams = function() {
         nu <<- Limit(nu, 0.001, 1)
         gamma <<- Limit(gamma, min = 0)
@@ -69,7 +160,7 @@ TrainSVR = function(x, y, horizon, lookback, nu = 0.01, gamma = 0.001, cost = 1,
         names = c("targets",
                   "predictors",
                   "horizon",
-                  "lookbacks",
+                  "lookback",
                   "nu",
                   "gamma",
                   "cost",
@@ -77,7 +168,7 @@ TrainSVR = function(x, y, horizon, lookback, nu = 0.01, gamma = 0.001, cost = 1,
         values = c(paste(ncol(y)),
                    ncol(x),
                    horizon,
-                   Count(lookback),
+                   lookback,
                    nu,
                    gamma,
                    cost,
@@ -107,8 +198,8 @@ TrainSVR = function(x, y, horizon, lookback, nu = 0.01, gamma = 0.001, cost = 1,
 #' @param model: Trained SVR forecast model.
 #' @param x: Table of future values for test input (one column per variable and one row per example).
 #' @param y: Table of past values for test output (one column per variable and one row per example).
-#' @param horizon [1, number of examples): The length of forecast horizon (the number of time steps in the horizon).
-#' @param lookback (-number of examples, -1]: Vector of steps to make back in time in order to prepare past y values as forecast input.
+#' @param horizon (0, number of examples): The length of forecast horizon (the number of time steps in the horizon).
+#' @param lookback (0, number of examples): The number of steps to look back in time to prepare past y values as forecast input.
 #' @param verbose: Shows whether or not to log forecast errors and plot forecast results.
 #' @return A list containing:
 #' 1) forecast: Time series forecast.
@@ -137,8 +228,8 @@ TestSVR = function(model, x, y, horizon, lookback, verbose = FALSE) {
 #' Metaheuristic optimization of forecast model hyperparameters.
 #' @param x: Table of training input examples (one column per variable and one row per example).
 #' @param y: Table of training output examples (one column per variable and one row per example).
-#' @param horizon [1, number of examples): The length of forecast horizon (the number of time steps in the horizon).
-#' @param lookback (-number of examples, -1]: Vector of steps to make back in time in order to prepare past y values as forecast input.
+#' @param horizon (0, number of examples): The length of forecast horizon (the number of time steps in the horizon).
+#' @param lookback (0, number of examples): The number of steps to look back in time to prepare past y values as forecast input.
 #' @param optimizer: One of available metaOpt algorithms.
 #' @param population (1, infinity]: Optimizer population size.
 #' @param generations (1, infinity]: Maximum number of optimization iterations.
@@ -150,7 +241,7 @@ TestSVR = function(model, x, y, horizon, lookback, verbose = FALSE) {
 OptimizeSVR = function(x,
                        y,
                        horizon,
-                       lookback,
+                       lookback = 2*horizon,
                        optimizer = "GOA",
                        population = 10,
                        generations = 20,
@@ -162,7 +253,7 @@ OptimizeSVR = function(x,
         x = as.data.frame(x)
         y = as.data.frame(y)
         train = 1:(Count(y) - horizon)
-        valid = (Count(y) - horizon - (max(lookback) - min(lookback))):Count(y)
+        valid = (Count(y) - horizon - lookback + 1):Count(y)
         return(list(x.train = as.data.frame(x[train,]),
                     y.train = as.data.frame(y[train,]),
                     x.valid = as.data.frame(x[valid,]),
@@ -226,8 +317,8 @@ OptimizeSVR = function(x,
 #' NOTE: The number of input and output examples must be the same (use NA to populate missing values).
 #' @param x: Table of training input examples (one column per variable and one row per example).
 #' @param y: Table of training output examples (one column per variable and one row per example).
-#' @param horizon [1, number of examples): The length of forecast horizon (the number of time steps in the horizon).
-#' @param lookback (-number of examples, -1]: Vector of steps to make back in time in order to prepare past y values as forecast input.
+#' @param horizon (0, number of examples): The length of forecast horizon (the number of time steps in the horizon).
+#' @param lookback (0, number of examples): The number of steps to look back in time to prepare past y values as forecast input.
 #' @param context (0, 1): The size of the S2S context relative to the number of lookbacks.
 #' @param fnns [0, infinity]: The number of fully-connected Feedforward Neural Network (FNN) layers inside S2S context autoencoder.
 #' @param fnnm (0, 1): The size of the FNN layer in the middle of the S2S context autoencoder relative to the edges of autoencoder.
@@ -244,7 +335,7 @@ OptimizeSVR = function(x,
 TrainRNN = function(x,
                     y,
                     horizon,
-                    lookback,
+                    lookback = 2*horizon,
                     context = 0.7,
                     fnns = round(horizon / 3),
                     fnnm = 0.3,
@@ -260,14 +351,15 @@ TrainRNN = function(x,
     LimitParams = function() {
         x <<- as.data.frame(x)
         y <<- as.data.frame(y)
-        lookback <<- as.vector(lookback)
+        horizon <<- Limit(horizon, 1, Count(y) - 1)
+        lookback <<- Limit(lookback, 1, Count(y) - 1)
         context <<- Limit(context, 0.1, 0.9)
         fnns <<- Limit(fnns, min = 0)
         fnnm <<- Limit(fnnm, 0.1, 0.9)
         cnnf <<- Limit(cnnf, min = 1)
-        cnnk <<- Limit(cnnk, 2, Count(lookback) - 1)
-        cnnp <<- Limit(cnnk, 2, Count(lookback) - 1)
-        cnns <<- Limit(cnns, 0, floor(log(Count(lookback)/(cnnk - 1), base = cnnp)))
+        cnnk <<- Limit(cnnk, 2, lookback - 1)
+        cnnp <<- Limit(cnnk, 2, lookback - 1)
+        cnns <<- Limit(cnns, 0, floor(log(lookback/(cnnk - 1), base = cnnp)))
         fnndrop <<- Limit(fnndrop, 0, 0.9)
         cnndrop <<- Limit(cnndrop, 0, 0.9)
     }
@@ -275,7 +367,7 @@ TrainRNN = function(x,
         names = c("targets",
                   "predictors",
                   "horizon",
-                  "lookbacks",
+                  "lookback",
                   "context",
                   "FNN layers",
                   "FNN middle",
@@ -288,7 +380,7 @@ TrainRNN = function(x,
         values = c(paste(ncol(y)),
                    ncol(x),
                    horizon,
-                   Count(lookback),
+                   lookback,
                    context,
                    fnns,
                    fnnm,
@@ -350,7 +442,7 @@ TrainRNN = function(x,
             units = c(max)
             half = (depth - 1) / 2
             step = floor((max - min) / floor(half))
-            for(i in 1:floor(half)) {
+            for (i in 1:floor(half)) {
                 units = c(units, Limit(units[i] - step, min, max))
             }
 
@@ -360,7 +452,7 @@ TrainRNN = function(x,
 
         units = FNNUnits(AbsInt(middle, edges), edges, depth)
         if (Count(units) == 0) return(input)
-        for(i in 1:Count(units)) input = input %>% FNN(units[i], name, i)
+        for (i in 1:Count(units)) input = input %>% FNN(units[i], name, i)
         return(input)
     }
     DeepCNN = function(input, depth, name) {
@@ -393,13 +485,13 @@ TrainRNN = function(x,
         }
 
         past = past %>% DeepCNN(cnns, "Past")
-        units = AbsInt(context, Count(lookback))
+        units = AbsInt(context, lookback)
         return(Encode(past, units) %>% Decode(2 * units, future))
     }
 
     Create = function() {
         Input = function(variables, steps, name) return(layer_input(shape = list(steps, variables), name = name))
-        InputPast = function() return(Input(ncol(y), Count(lookback), "input_past"))
+        InputPast = function() return(Input(ncol(y), lookback, "input_past"))
         InputFuture = function() return(Input(ncol(x), horizon, "input_future"))
         Output = function(model) return(layer_dense(model, units = ncol(y), name = "output"))
 
@@ -439,8 +531,8 @@ TrainRNN = function(x,
 #' @param model: Trained Multiple-Input Multiple-Output (MIMO) RNN forecast model.
 #' @param x: Table of training input examples (one column per variable and one row per example).
 #' @param y: Table of training output examples (one column per variable and one row per example).
-#' @param horizon [1, number of examples): The length of forecast horizon (the number of time steps in the horizon).
-#' @param lookback (-number of examples, -1]: Vector of steps to make back in time in order to prepare past y values as forecast input.
+#' @param horizon (0, number of examples): The length of forecast horizon (the number of time steps in the horizon).
+#' @param lookback (0, number of examples): The number of steps to look back in time to prepare past y values as forecast input.
 #' @param iterations (1, infinity]: Maximum number of training iterations.
 #' @param batch (1, infinity]: Batch size for each iteration.
 #' @param verbose: Shows whether or not to log and plot training details.
@@ -459,8 +551,8 @@ UpdateRNN = function(model, x, y, horizon, lookback, iterations = 50, batch = 10
 #' @param model: Trained Multiple-Input Multiple-Output (MIMO) RNN forecast model.
 #' @param x: Table of future values for test input (one column per variable and one row per example).
 #' @param y: Table of past values for test output (one column per variable and one row per example).
-#' @param horizon [1, number of examples): The length of forecast horizon (the number of time steps in the horizon).
-#' @param lookback (-number of examples, -1]: Vector of steps to make back in time in order to prepare past y values as forecast input.
+#' @param horizon (0, number of examples): The length of forecast horizon (the number of time steps in the horizon).
+#' @param lookback (0, number of examples): The number of steps to look back in time to prepare past y values as forecast input.
 #' @param verbose: Shows whether or not to log forecast errors and plot forecast results.
 #' @return A list containing:
 #' 1) forecast: Time series forecast.
@@ -499,8 +591,8 @@ LoadRNN = function(folder, file) return(load_model_hdf5(GetPath(folder, file, 'r
 #' Metaheuristic optimization of forecast model hyperparameters.
 #' @param x: Table of training input examples (one column per variable and one row per example).
 #' @param y: Table of training output examples (one column per variable and one row per example).
-#' @param horizon [1, number of examples): The length of forecast horizon (the number of time steps in the horizon).
-#' @param lookback (-number of examples, -1]: Vector of steps to make back in time in order to prepare past y values as forecast input.
+#' @param horizon (0, number of examples): The length of forecast horizon (the number of time steps in the horizon).
+#' @param lookback (0, number of examples): The number of steps to look back in time to prepare past y values as forecast input.
 #' @param optimizer: One of available metaOpt algorithms.
 #' @param population (1, infinity]: Optimizer population size.
 #' @param generations (1, infinity]: Maximum number of optimization iterations.
@@ -514,7 +606,7 @@ LoadRNN = function(folder, file) return(load_model_hdf5(GetPath(folder, file, 'r
 OptimizeRNN = function(x,
                        y,
                        horizon,
-                       lookback,
+                       lookback = 2*horizon,
                        optimizer = "GOA",
                        population = 10,
                        generations = 20,
@@ -528,7 +620,7 @@ OptimizeRNN = function(x,
         x = as.data.frame(x)
         y = as.data.frame(y)
         train = 1:(Count(y) - horizon)
-        valid = (Count(y) - horizon - (max(lookback) - min(lookback))):Count(y)
+        valid = (Count(y) - horizon - lookback + 1):Count(y)
         return(list(x.train = as.data.frame(x[train,]),
                     y.train = as.data.frame(y[train,]),
                     x.valid = as.data.frame(x[valid,]),

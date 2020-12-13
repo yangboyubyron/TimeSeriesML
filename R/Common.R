@@ -46,6 +46,15 @@ DateTime = function(strings, format = '%F %T') {
 #' @return DateTime parts.
 DatePart = function(timestamps, part) return(as.numeric(format(timestamps, part)))
 
+#' Combine: Cartesian product of strings.
+#' @param a: Collection of strings.
+#' @param b: Collection of strings.
+#' @return Each string from a concatenated with each string from b.
+Combine = function(a, b) {
+    c = as.data.frame(expand.grid(unlist(b), unlist(a)))
+    return(paste(c[,2],c[,1]))
+}
+
 #' Count: Counts the table rows or collection items.
 #' @param data: Table (matrix or data frame) or collection (vector or list).
 #' @return The number of table rows or collection length.
@@ -72,13 +81,13 @@ Join = function(columns1, columns2, colnames1 = NULL, colnames2 = NULL, rownames
 
     table1 = as.data.frame(columns1)
     table2 = as.data.frame(columns2)
-    table = Bind(table1, table2)
+    table = as.data.frame(Bind(table1, table2))
 
     if (Count(colnames1) > 0) colnames(table)[1:ncol(table1)] = colnames1
     if (Count(colnames2) > 0) colnames(table)[(ncol(table1) + 1):ncol(table)] = colnames2
     if (Count(rownames) > 0) row.names(table) = rownames
 
-    return(table)
+    return(as.data.frame(table))
 }
 
 #' Union: Creates a union of rows.
@@ -95,12 +104,41 @@ Union = function(rows1, rows2, colnames = NULL, rownames = NULL) {
         return(as.data.frame(rbind(table1, table2)))
     }
 
-    table = Bind(rows1, rows2)
+    table = as.data.frame(Bind(rows1, rows2))
 
     if (Count(colnames) > 0) colnames(table) = colnames
     if (Count(rownames) > 0) row.names(table) = rownames
 
     return(table)
+}
+
+#' Subset: Creates subset while preserving row and column names.
+#' @param table: Table (data frame or matrix).
+#' @param rows: Selected rows.
+#' @param cols: Selected columns
+#' @return Subset of the table.
+Subset = function(table, rows = 1:nrow(table), cols = 1:ncol(table)) {
+    GetNames = function(names, indexes) {
+        selected = na.omit(names[indexes])
+        if (Count(selected) == 0) return(indexes)
+        return(selected)
+    }
+
+    s = as.data.frame(table[rows,cols])
+    row.names(s) = GetNames(row.names(table), rows)
+    colnames(s) = GetNames(colnames(table), cols)
+    return(s)
+}
+
+#' Trim: Trims table while preserving row and column names.
+#' @param table: Table (data frame or matrix).
+#' @return Table without rows with NA values.
+Trim = function(table) {
+    t = na.omit(Join(table, row.names(table)))
+    row.names(t) = t[,ncol(t)]
+    t = t[,1:ncol(table)]
+    colnames(t) = colnames(table)
+    return(t)
 }
 
 #' Slide: Slides across table rows.
