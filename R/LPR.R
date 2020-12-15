@@ -13,9 +13,7 @@
 #' @param connection: Open connection to SQL Server database.
 #' @param folder: Name of a folder into which to export profiles.
 PrepareANDLPs = function(connection, folder) {
-    GetDataSets = function(connection) {
-        return(RODBC::sqlQuery(connection, "EXEC GetDataSets"))
-    }
+    GetDataSets = function(connection) return(RODBC::sqlQuery(connection, "EXEC GetDataSets"))
 
     GetANDLPs = function(connection, dataset) {
         ds = dataset$DataSetID
@@ -25,24 +23,11 @@ PrepareANDLPs = function(connection, folder) {
         return(RODBC::sqlQuery(connection, query))
     }
 
-    Concatenate = function(ANDLPs) {
-        if (Count(ANDLPs) == 0) {
-            return(c())
-        }
-
-        ANDLPs$timevar = with(ANDLPs, paste("CP_", CharacteristicPeriod, ".CD_", CharacteristicDay, ".PQ_", PorQ, sep = ""))
-        columns = setdiff(colnames(ANDLPs), c("CharacteristicPeriod", "CharacteristicDay", "PorQ"))
-        reshaped = reshape(ANDLPs[, columns], direction = "wide", idvar = "ConsumerID", timevar = "timevar")
-        row.names(reshaped) = reshaped[, "ConsumerID"]
-        profiles = as.matrix(Hmisc::impute(as.data.frame(reshaped[, colnames(reshaped) != "ConsumerID"]), mean))
-        return(as.data.frame(profiles))
-    }
-
     datasets = GetDataSets(connection)
     for (row in c(1:Count(datasets))) {
         dataset = datasets[row,]
         ANDLPs = GetANDLPs(connection, dataset)
-        profiles = Concatenate(ANDLPs)
+        profiles = ANDLPs %>% Pivot("ConsumerID", c("CharacteristicPeriod", "CharacteristicDay", "PorQ"))
         DS = dataset$DataSetID
         CLT = dataset$CharacteristicLoadType
         ExportCSV(profiles, folder, c("DS", DS, "CLT", CLT), rows = TRUE)

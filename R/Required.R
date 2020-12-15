@@ -8,6 +8,7 @@ suppressWarnings(suppressMessages({
                  "devtools",
                  "reticulate",
                  "keras",
+                 "tidyverse",
                  "tensorflow",
                  "doParallel",
                  "RODBC",

@@ -141,6 +141,24 @@ Trim = function(table) {
     return(t)
 }
 
+#' Pivot: Pivots the table.
+#' @param table: Data frame or matrix.
+#' @param rowvars: Variables to be united into row discriminators.
+#' @param colvars: Variables to be united into column discriminators.
+#' @param impute: Shows whether or not to impute missing values using mean.
+#' @return Reshaped table.
+Pivot = function(table, rowvars, colvars, impute = TRUE) {
+    if (Count(table) == 0) return(c())
+
+    data = table %>% unite(rowvar, rowvars, sep = ".") %>% unite(colvar, colvars, sep = ".")
+    reshaped = reshape(data, direction = "wide", idvar = "rowvar", timevar = "colvar")
+    row.names(reshaped) = reshaped[, "rowvar"]
+    reshaped = reshaped[, colnames(reshaped) != "rowvar"]
+    reshaped = as.data.frame(reshaped)
+    if (impute) reshaped = as.data.frame(as.matrix(Hmisc::impute(reshaped, mean)))
+    return(reshaped)
+}
+
 #' Slide: Slides across table rows.
 #' @param table: Data frame or matrix.
 #' @param slider: Vector of relative row indexes.

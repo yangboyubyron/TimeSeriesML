@@ -107,14 +107,14 @@ Tensor = function(x, y, horizon, lookback, type = "MIMO") {
     x = as.data.frame(x)
     y = as.data.frame(y)
     count = min(Count(x), Count(y))
-    future = lookback:count
+    future = (lookback + 1):count
     backward = (1-lookback):0
     if (type == "rec") {
         past = 1:(count - 1)
-        forward = 1
+        forward = 0
     } else {
         past = 1:(count - horizon)
-        forward = 1:horizon
+        forward = 0:(horizon-1)
     }
 
     input.past = Slide(y[past,], backward)
@@ -540,9 +540,10 @@ TrainRNN = function(x,
 UpdateRNN = function(model, x, y, horizon, lookback, iterations = 50, batch = 1024, verbose = FALSE) {
     train = Tensor(x, y, horizon, lookback, "MIMO")
     limit = callback_early_stopping(monitor = "python_function", mode = "min", patience = 10)
+    split = ifelse(dim(train$output)[1] < 10, 0, 0.3)
     model %>% fit(train$input, train$output,
                   epochs = max(1, iterations), batch_size = max(1, batch), callbacks = list(limit),
-                  validation_split = 0.3, shuffle = FALSE, verbose = as.numeric(verbose))
+                  validation_split = split, shuffle = FALSE, verbose = as.numeric(verbose))
     return(model)
 }
 
