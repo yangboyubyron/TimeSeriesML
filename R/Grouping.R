@@ -331,7 +331,7 @@ Cluster = function(profiles, k.min, k.max, algorithm = "TSGA", cvi = "DBI", core
     Log("Preparing centroids...")
     centroids = Centroids(profiles, clusters)
 
-    Log(c("Clustering finished (", Count(centroids), " cluster(s), validity = ", validity, ", duration = ", StopwatchElapsedSeconds(stopwatch), " second(s))."))
+    Log(c("Clustering finished (", Count(centroids), " cluster(s), validity = ", validity, ", duration = ", StopwatchElapsedSeconds(stopwatch), " sec)."))
     return(list(clusters = clusters, centroids = centroids, validity = validity))
 }
 
@@ -381,7 +381,7 @@ Classify = function(profiles, centroids, algorithm = "SVM", validate = FALSE) {
         clusters = predict(model, profiles)
     }
 
-    Log(c("Classification finished (duration = ", StopwatchElapsedSeconds(stopwatch), " second(s))."))
+    Log(c("Classification finished (duration = ", StopwatchElapsedSeconds(stopwatch), " sec)."))
 
     validity = NA
     if (!is.null(model) && validate) {

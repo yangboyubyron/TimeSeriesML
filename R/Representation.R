@@ -143,7 +143,7 @@ Denoise = function(profiles, count = 10, algorithm = "VMD") {
 
     colnames(result) = colnames(profiles)
     row.names(result) = row.names(profiles)
-    Log(c("Denoising finished (duration = ", StopwatchElapsedSeconds(stopwatch), " second(s))."))
+    Log(c("Denoising finished (duration = ", StopwatchElapsedSeconds(stopwatch), " sec)."))
     return(result)
 }
 
