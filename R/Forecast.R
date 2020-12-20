@@ -1,95 +1,3 @@
-# TSFDS: Time Series Forecast Data Set
-#' Splits data into one training set and one or more test data sets.
-#' @param data: Table of examples (one column per variable and one row per example).
-#' @param col_time: Timestamp column index.
-#' @param col_x_required: Required input column indexes.
-#' @param col_x_optional: Optional input column indexes.
-#' @param col_y: Output column indexes.
-#' @param splitter: Row that splits training from test set (last training set row).
-#' @param horizon: The length of forecast horizon (the number of time steps in the horizon).
-#' @param lookback: The number of steps to look back in time to prepare past y values as forecast input.
-#' @param uncertainty: The number of rows to shift back and forth while matching optional inputs with outputs.
-#' @param encoding: One of available time encoding types:
-#' 1) "polar": Polar coordinate system.
-#' 2) "onehot": One-Hot encoding.
-#' @param normalization: One of available normalization types:
-#' 1) "AM": Abs-Max normalization
-#' 2) "MM": Min-Max normalization
-#' 3) "AVG": Divide-by-average normalization
-#' 4) "Z": Z-normalization
-#' @return A list with two members:
-#' 1) train: A list with training data:
-#' 1.1) x: Table with normalized training inputs.
-#' 1.2) y: Table with normalized training outputs.
-#' 1.3) norm: Normalization parameters (applied to both training and test data).
-#' 2) test: A list with test data split by horizon, where each member contains:
-#' 2.1) x: Table with normalized test inputs.
-#' 2.2) y: Table with normalized test outputs.
-TSFDS = function(data,
-                 col_time,
-                 col_x_required,
-                 col_x_optional,
-                 col_y,
-                 splitter,
-                 horizon,
-                 lookback,
-                 uncertainty = 1,
-                 encoding = 'onehot',
-                 normalization = 'MM') {
-    PrepareSet = function() {
-        Get = function(cols) return(Subset(data, cols = cols))
-        Time = function() return(EncodeTime(DateTime(data[,col_time]),type=encoding))
-        RequiredX = function() return(Get(col_x_required))
-        OptionalX = function() {
-            p = Get(col_x_optional)
-            slider = -uncertainty:uncertainty
-            candidates = as.data.frame(Slide(p, slider, FALSE))
-            colnames(candidates) = Combine(colnames(p), slider)
-            return(candidates)
-        }
-
-        y = Get(col_y)
-        x.base = Join(Time(), RequiredX())
-        x.opt = SelectFeatures(OptionalX(), y, TrainRows())
-        x = Join(x.base, x.opt)
-        return(list(x = x, y = y))
-    }
-    NormParams = function(x, y) {
-        nx = NormParam(x, normalization, 'col')
-        ny = NormParam(y, normalization, 'col')
-        return(list(x = nx, y = ny))
-    }
-    TrainRows = function() return(1:splitter)
-    TrainSubset = function(x, y) {
-        x = Subset(x, rows=TrainRows())
-        y = Subset(y, rows=TrainRows())
-        norm = NormParams(x, y)
-        x = Norm(x, norm$x)
-        y = Norm(y, norm$y)
-        return(list(x = x, y = y, norm = norm))
-    }
-    TestRows = function(splitter) return((splitter - lookback + 1):(splitter + horizon))
-    TestSubsets = function(x, y, norm) {
-        TestSubset = function(rows) {
-            x = Norm(Subset(x, rows=rows), norm$x)
-            y = Norm(Subset(y, rows=rows), norm$y)
-            return(list(x = x, y = y))
-        }
-
-        test = list()
-        for(i in 1:floor((Count(y)-splitter-uncertainty)/horizon)) {
-            test[[i]] = TestSubset(TestRows(splitter+(i-1)*horizon))
-        }
-
-        return(test)
-    }
-
-    set = PrepareSet()
-    train = TrainSubset(set$x, set$y)
-    test = TestSubsets(set$x, set$y, train$norm)
-    return(list(train = train, test = test))
-}
-
 #' Tensor: Creates n-dimensional dataset.
 #' Creates a dataset with inputs and outputs for training or testing forecast model.
 #' NOTE: The number of input and output examples must be the same (use NA to populate missing values).
@@ -147,50 +55,24 @@ Tensor = function(x, y, horizon, lookback, type = "MIMO") {
 #' @param tolerance (0, 1): Convergence tolerance controls the search for an optimal solution (hyperplanes) as follows:
 #' 1) Small tolerance increases difficulty in finding an optimal solution and may cause overfitting,
 #' 2) Large tolerance decreases difficulty in finding an optimal solution and may cause underfitting.
-#' @param verbose: Shows whether or not to log training details.
 #' @return SVR model.
-TrainSVR = function(x, y, horizon, lookback = 2*horizon, nu = 0.01, gamma = 0.001, cost = 1, tolerance = 0.01, verbose = FALSE) {
+TrainSVR = function(x, y, horizon, lookback = 2*horizon, nu = 0.01, gamma = 0.001, cost = 1, tolerance = 0.01) {
     LimitParams = function() {
         nu <<- Limit(nu, 0.001, 1)
         gamma <<- Limit(gamma, min = 0)
         cost <<- Limit(cost, min = 0.001)
         tolerance <<- Limit(tolerance, 0.001, 0.999)
     }
-    PrintParams = function() {
-        names = c("targets",
-                  "predictors",
-                  "horizon",
-                  "lookback",
-                  "nu",
-                  "gamma",
-                  "cost",
-                  "tolerance")
-        values = c(paste(ncol(y)),
-                   ncol(x),
-                   horizon,
-                   lookback,
-                   nu,
-                   gamma,
-                   cost,
-                   tolerance)
-        names(values) = names
-        print(values)
+    Train = function() {
+        train = Tensor(x, y, horizon, lookback, "rec")
+        input = as.matrix(as.data.frame(train$input))
+        output = as.matrix(as.data.frame(train$output))
+        model = svm(x = input, y = output, type = "nu-regression", nu = nu, gamma = gamma, cost = cost, tolerance = tolerance, cross = 10)
+        return(model)
     }
 
     LimitParams()
-    if (verbose) {
-        Log(c("SVR training started..."))
-        stopwatch = StopwatchStartNew()
-        PrintParams()
-    }
-
-    train = Tensor(x, y, horizon, lookback, "rec")
-    input = as.matrix(as.data.frame(train$input))
-    output = as.matrix(as.data.frame(train$output))
-    model = svm(x = input, y = output, type = "nu-regression", nu = nu, gamma = gamma, cost = cost, tolerance = tolerance, cross = 10)
-
-    if (verbose) Log(c("SVR training finished (duration = ", StopwatchElapsedSeconds(stopwatch), " second(s))."))
-    return(model)
+    return(Train())
 }
 
 #' TestSVR: Tests Support Vector Regression (SVR) model.
@@ -200,14 +82,10 @@ TrainSVR = function(x, y, horizon, lookback = 2*horizon, nu = 0.01, gamma = 0.00
 #' @param y: Table of past values for test output (one column per variable and one row per example).
 #' @param horizon (0, number of examples): The length of forecast horizon (the number of time steps in the horizon).
 #' @param lookback (0, number of examples): The number of steps to look back in time to prepare past y values as forecast input.
-#' @param verbose: Shows whether or not to log forecast errors and plot forecast results.
-#' @return A list containing:
-#' 1) forecast: Time series forecast.
-#' 2) errors: Forecast errors.
-TestSVR = function(model, x, y, horizon, lookback, verbose = FALSE) {
+#' @return Time series forecast.
+TestSVR = function(model, x, y, horizon, lookback) {
     test = Tensor(x, y, horizon, lookback, "rec")
     input = as.matrix(as.data.frame(test$input))
-    actual = as.matrix(as.data.frame(test$output))
     input.column = ncol(input) - ncol(as.data.frame(x))
 
     forecast = c()
@@ -220,8 +98,7 @@ TestSVR = function(model, x, y, horizon, lookback, verbose = FALSE) {
     forecast = as.data.frame(forecast)
     colnames(forecast) = colnames(y)
     rownames(forecast) = c()
-    errors = EvaluateForecast(actual, forecast, verbose = verbose)
-    return(list(forecast = forecast, errors = errors))
+    return(forecast)
 }
 
 #' OptimizeSVR: Optimized Support Vector Regression (SVR) training.
@@ -237,7 +114,7 @@ TestSVR = function(model, x, y, horizon, lookback, verbose = FALSE) {
 #' @param folder: Folder for csv export with best parameters and errors.
 #' @param name: Name of parameters and errors (csv file name prefix).
 #' @param verbose: Shows whether or not to log forecast errors and plot forecast results.
-#' @return Search result.
+#' @return Optimized SVR model.
 OptimizeSVR = function(x,
                        y,
                        horizon,
@@ -266,10 +143,11 @@ OptimizeSVR = function(x,
         cost = args["cost"]
         tolerance = args["tolerance"]
 
-        model = TrainSVR(set$x.train, set$y.train, horizon, lookback, nu, gamma, cost, tolerance, verbose)
-        output = model %>% TestSVR(set$x.valid, set$y.valid, horizon, lookback, verbose)
+        model = TrainSVR(set$x.train, set$y.train, horizon, lookback, nu, gamma, cost, tolerance)
+        output = model %>% TestSVR(set$x.valid, set$y.valid, horizon, lookback)
 
-        error = output$errors["RMSE[%]"]
+        valid.rows = (Count(y) - horizon + 1):Count(y)
+        error = EvaluateForecast(y[valid.rows,], output, verbose = verbose)["RMSE[%]"]
         if (is.null(best.error) || error < best.error) {
             best.args <<- args
             best.model <<- model
@@ -283,10 +161,8 @@ OptimizeSVR = function(x,
         return(error)
     }
 
-    if (verbose) {
-        Log(c(optimizer, "-SVR optimization started (", generations, "x", population, " iterations)..."))
-        stopwatch = StopwatchStartNew()
-    }
+    Log(c(optimizer, "-SVR optimization started (", generations, "x", population, " iterations)..."))
+    stopwatch = StopwatchStartNew()
 
     optimal = NULL
     best.args = NULL
@@ -299,13 +175,10 @@ OptimizeSVR = function(x,
     max = c(1, 1, 1, 0.1)
     optimal = Optimize(Evaluate, min, max, optimizer, population, generations, other)
 
-    if (verbose) {
-        Log(c("SVR optimization finished (duration = ", StopwatchElapsedSeconds(stopwatch), " second(s))."))
-        print(optimal)
-        print(best.args)
-        print(best.error)
-    }
-
+    Log(c(optimizer, "-SVR optimization finished (duration = ", StopwatchElapsedSeconds(stopwatch), " sec)."))
+    print(optimal)
+    print(best.args)
+    print(best.error)
     return(best.model)
 }
 
@@ -330,7 +203,7 @@ OptimizeSVR = function(x,
 #' @param cnndrop [0, 1): Fraction of the units to drop after each CNN layer (CNN dropout).
 #' @param iterations (1, infinity]: Maximum number of training iterations.
 #' @param batch (1, infinity]: Batch size for each iteration.
-#' @param verbose: Shows whether or not to log and plot training details.
+#' @param verbose: Shows whether or not to log model and training details.
 #' @return RNN model.
 TrainRNN = function(x,
                     y,
@@ -362,36 +235,6 @@ TrainRNN = function(x,
         cnns <<- Limit(cnns, 0, floor(log(lookback/(cnnk - 1), base = cnnp)))
         fnndrop <<- Limit(fnndrop, 0, 0.9)
         cnndrop <<- Limit(cnndrop, 0, 0.9)
-    }
-    PrintParams = function() {
-        names = c("targets",
-                  "predictors",
-                  "horizon",
-                  "lookback",
-                  "context",
-                  "FNN layers",
-                  "FNN middle",
-                  "CNN layers",
-                  "CNN filters",
-                  "CNN kernel",
-                  "CNN pool",
-                  "FNN dropout",
-                  "CNN dropout")
-        values = c(paste(ncol(y)),
-                   ncol(x),
-                   horizon,
-                   lookback,
-                   context,
-                   fnns,
-                   fnnm,
-                   cnns,
-                   cnnf,
-                   cnnk,
-                   cnnp,
-                   fnndrop,
-                   cnndrop)
-        names(values) = names
-        print(values)
     }
 
     AbsInt = function(rel, max) return(Limit(round(rel * max), 1, max - 1))
@@ -511,18 +354,13 @@ TrainRNN = function(x,
         if (verbose) model %>% summary()
         return(model)
     }
-
-    LimitParams()
-    if (verbose) {
-        Log(c("RNN training started..."))
-        stopwatch = StopwatchStartNew()
-        PrintParams()
+    Train = function(model) {
+        model %>% UpdateRNN(x, y, horizon, lookback, iterations, batch, verbose)
+        return(model)
     }
 
-    model = Create() %>% Compile() %>% UpdateRNN(x, y, horizon, lookback, iterations, batch, verbose)
-
-    if (verbose) Log(c("RNN training finished (duration = ", StopwatchElapsedSeconds(stopwatch), " second(s))."))
-    return(model)
+    LimitParams()
+    return(Create() %>% Compile() %>% Train())
 }
 
 #' UpdateRNN: Updates Recurrent Neural Network (RNN).
@@ -535,8 +373,7 @@ TrainRNN = function(x,
 #' @param lookback (0, number of examples): The number of steps to look back in time to prepare past y values as forecast input.
 #' @param iterations (1, infinity]: Maximum number of training iterations.
 #' @param batch (1, infinity]: Batch size for each iteration.
-#' @param verbose: Shows whether or not to log and plot training details.
-#' @return Updated RNN model.
+#' @param verbose: Shows whether or not to log training details.
 UpdateRNN = function(model, x, y, horizon, lookback, iterations = 50, batch = 1024, verbose = FALSE) {
     train = Tensor(x, y, horizon, lookback, "MIMO")
     limit = callback_early_stopping(monitor = "python_function", mode = "min", patience = 10)
@@ -544,7 +381,6 @@ UpdateRNN = function(model, x, y, horizon, lookback, iterations = 50, batch = 10
     model %>% fit(train$input, train$output,
                   epochs = max(1, iterations), batch_size = max(1, batch), callbacks = list(limit),
                   validation_split = split, shuffle = FALSE, verbose = as.numeric(verbose))
-    return(model)
 }
 
 #' TestRNN: Tests Recurrent Neural Network (RNN).
@@ -554,11 +390,8 @@ UpdateRNN = function(model, x, y, horizon, lookback, iterations = 50, batch = 10
 #' @param y: Table of past values for test output (one column per variable and one row per example).
 #' @param horizon (0, number of examples): The length of forecast horizon (the number of time steps in the horizon).
 #' @param lookback (0, number of examples): The number of steps to look back in time to prepare past y values as forecast input.
-#' @param verbose: Shows whether or not to log forecast errors and plot forecast results.
-#' @return A list containing:
-#' 1) forecast: Time series forecast.
-#' 2) errors: Forecast errors.
-TestRNN = function(model, x, y, horizon, lookback, verbose = FALSE) {
+#' @return Time series forecast.
+TestRNN = function(model, x, y, horizon, lookback) {
     GetOutput = function(tensor) {
         variables = ncol(as.data.frame(y))
         data = matrix(tensor, ncol = variables, nrow = horizon)
@@ -569,11 +402,8 @@ TestRNN = function(model, x, y, horizon, lookback, verbose = FALSE) {
     }
 
     test = Tensor(x, y, horizon, lookback, "MIMO")
-    result = model %>% predict(test$input)
-    actual = GetOutput(test$output)
-    forecast = GetOutput(result)
-    errors = EvaluateForecast(actual, forecast, verbose = verbose)
-    return(list(forecast = forecast, errors = errors))
+    forecast = model %>% predict(test$input) %>% GetOutput()
+    return(forecast)
 }
 
 #' SaveRNN: Saves Recurrent Neural Network (RNN) to '.rnn' file.
@@ -603,7 +433,7 @@ LoadRNN = function(folder, file) return(load_model_hdf5(GetPath(folder, file, 'r
 #' @param folder: Folder for csv export with best parameters and errors.
 #' @param name: Name of parameters and errors (csv file name prefix).
 #' @param verbose: Shows whether or not to log forecast errors and plot forecast results.
-#' @return Search result.
+#' @return Optimized RNN model.
 OptimizeRNN = function(x,
                        y,
                        horizon,
@@ -646,7 +476,8 @@ OptimizeRNN = function(x,
                          iterations, batch, verbose)
         output = model %>% TestRNN(set$x.valid, set$y.valid, horizon, lookback, verbose)
 
-        error = output$errors["RMSE[%]"]
+        valid.rows = (Count(y) - horizon + 1):Count(y)
+        error = EvaluateForecast(y[valid.rows,], output, verbose = verbose)["RMSE[%]"]
         if (is.null(best.error) || error < best.error) {
             best.args <<- args
             best.model <<- model
@@ -663,10 +494,8 @@ OptimizeRNN = function(x,
         return(error)
     }
 
-    if (verbose) {
-        Log(c(optimizer, "-RNN optimization started (", generations, "x", population, " iterations)..."))
-        stopwatch = StopwatchStartNew()
-    }
+    Log(c(optimizer, "-RNN optimization started (", generations, "x", population, " iterations)..."))
+    stopwatch = StopwatchStartNew()
 
     best.args = NULL
     best.model = NULL
@@ -678,13 +507,10 @@ OptimizeRNN = function(x,
     max = c(0.8, 9, 0.8, 5, 768, 5, 5, 0.6, 0.6)
     optimal = Optimize(Evaluate, min, max, optimizer, population, generations, other)
 
-    if (verbose) {
-        Log(c("RNN optimization finished (duration = ", StopwatchElapsedSeconds(stopwatch), " second(s))."))
-        print(optimal)
-        print(best.args)
-        print(best.error)
-    }
-
+    Log(c(optimizer, "-RNN optimization finished (duration = ", StopwatchElapsedSeconds(stopwatch), " sec)."))
+    print(optimal)
+    print(best.args)
+    print(best.error)
     return(best.model)
 }
 
