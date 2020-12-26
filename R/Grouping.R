@@ -290,8 +290,7 @@ Cluster = function(profiles, k.min, k.max, algorithm = "TSGA", cvi = "DBI", core
     }
 
     k.min = Limit(k.min, max = k.max)
-    Log(c("Clustering started (", profiles.rowcount, " profiles, dimensionality = ", ncol(profiles), ", k.min = ", k.min, ", k.max = ", k.max, ")..."))
-    stopwatch = StopwatchStartNew()
+    watch = Log(c("Clustering started (", profiles.rowcount, " profiles, dimensionality = ", ncol(profiles), ", k.min = ", k.min, ", k.max = ", k.max, ")..."))
     registerDoParallel(cores = cores)
 
     clusters = NULL
@@ -331,7 +330,7 @@ Cluster = function(profiles, k.min, k.max, algorithm = "TSGA", cvi = "DBI", core
     Log("Preparing centroids...")
     centroids = Centroids(profiles, clusters)
 
-    Log(c("Clustering finished (", Count(centroids), " cluster(s), validity = ", validity, ", duration = ", StopwatchElapsedSeconds(stopwatch), " sec)."))
+    Log(c("Clustering finished (", Count(centroids), " cluster(s), validity = ", validity, ", duration = ", Elapsed(watch), " sec)."))
     return(list(clusters = clusters, centroids = centroids, validity = validity))
 }
 
@@ -355,8 +354,7 @@ Classify = function(profiles, centroids, algorithm = "SVM", validate = FALSE) {
     }
 
     centroids.rowcount = Count(centroids)
-    Log(c("Classification started (", profiles.rowcount, " profiles, ", centroids.rowcount, " centroids)..."))
-    stopwatch = StopwatchStartNew()
+    watch = Log(c("Classification started (", profiles.rowcount, " profiles, ", centroids.rowcount, " centroids)..."))
 
     model = NULL
     if (centroids.rowcount < 2) {
@@ -381,7 +379,7 @@ Classify = function(profiles, centroids, algorithm = "SVM", validate = FALSE) {
         clusters = predict(model, profiles)
     }
 
-    Log(c("Classification finished (duration = ", StopwatchElapsedSeconds(stopwatch), " sec)."))
+    Log(c("Classification finished (duration = ", Elapsed(watch), " sec)."))
 
     validity = NA
     if (!is.null(model) && validate) {
@@ -428,7 +426,7 @@ Group = function(profiles, k.min, k.max, algorithm.clustering = "TSGA", cvi = "D
 
     profilesToCluster = profiles
     profilesToClassify = NULL # TODO: Detect profiles with damaged or missing data (future work).
-    stopwatch = StopwatchStartNew()
+    watch = Stopwatch()
     clust = Cluster(profilesToCluster, k.min, k.max, algorithm.clustering, cvi, cores)
     class = Classify(profilesToClassify, clust$centroids, algorithm.classification, validate.classification)
     groups.profilesToCluster = Join(row.names(profilesToCluster), clust$clusters)
@@ -437,6 +435,6 @@ Group = function(profiles, k.min, k.max, algorithm.clustering = "TSGA", cvi = "D
     groups = Union(groups.profilesToCluster, groups.profilesToClassify, colnames = c("Profile", "Group"), rownames = groups.rownames)
     k = Count(clust$centroids)
     if (k == 0) { k = Count(class$centroids) }
-    duration = StopwatchElapsedSeconds(stopwatch)
+    duration = Elapsed(watch)
     return(list(groups = groups, k = k, cluster.validity = clust$validity, classification.validity = class$validity, duration = duration))
 }

@@ -4,20 +4,22 @@ Now = function() return(paste(Sys.time(), sep = ""))
 
 #' Log: Logs current time and given message.
 #' @param message: A single object, vector or a list of objects to be concatenated into a log message.
+#' @return Stopwatch that can be used with Elapsed function.
 Log = function(message) {
     log.prefix = paste("[", Now(), "]", sep = "")
     log.message = paste(message, collapse = "")
     write(paste(log.prefix, log.message), stdout())
+    return(Stopwatch())
 }
 
-#' StopwatchStartNew: Creates and starts new stopwatch.
-#' @return A number representing stopwatch.
-StopwatchStartNew = function() return(proc.time())
+#' Stopwatch: Creates and starts new stopwatch.
+#' @return Stopwatch that can be used with Elapsed function.
+Stopwatch = function() return(proc.time())
 
-#' StopwatchElapsedSeconds: Extracts elapsed number of seconds from given stopwatch.
-#' @param stopwatch: Stopwatch created with the StopwatchStartNew function.
+#' Elapsed: Extracts elapsed number of seconds from stopwatch.
+#' @param stopwatch: Stopwatch created with the Stopwatch function.
 #' @return Elapsed number of seconds.
-StopwatchElapsedSeconds = function(stopwatch) return(as.integer((proc.time() - stopwatch)[3]))
+Elapsed = function(stopwatch) return(as.integer((proc.time() - stopwatch)[3]))
 
 #' Limit: Limits value to [min, max] range.
 #' @param value: Numeric value.

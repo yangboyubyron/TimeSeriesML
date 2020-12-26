@@ -92,7 +92,6 @@ Decompose = function(profile, count = 10, algorithm = "VMD") {
 
     signal = as.numeric(as.vector(profile))
     if (Count(signal) == 0) {
-        Log("Decomposition skipped. There is nothing to decompose.")
         return(c())
     }
     if (count < 2) {
@@ -130,12 +129,8 @@ Denoise = function(profiles, count = 10, algorithm = "VMD") {
         return(t(colSums(components[1:(count - 1),])))
     }
 
-    profiles.rowcount = Count(profiles)
-    Log(c("Denoising started (", profiles.rowcount, " profiles, ", count, " components, ", algorithm, ")... "))
-    stopwatch = StopwatchStartNew()
-
     result = c()
-    for (row in 1:profiles.rowcount) {
+    for (row in 1:Count(profiles)) {
         profile = profiles[row,]
         components = Decompose(profile, count, algorithm)
         result = Union(result, Sum(components))
@@ -143,7 +138,6 @@ Denoise = function(profiles, count = 10, algorithm = "VMD") {
 
     colnames(result) = colnames(profiles)
     row.names(result) = row.names(profiles)
-    Log(c("Denoising finished (duration = ", StopwatchElapsedSeconds(stopwatch), " sec)."))
     return(result)
 }
 

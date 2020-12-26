@@ -101,87 +101,6 @@ TestSVR = function(model, x, y, horizon, lookback) {
     return(forecast)
 }
 
-#' OptimizeSVR: Optimized Support Vector Regression (SVR) training.
-#' Metaheuristic optimization of forecast model hyperparameters.
-#' @param x: Table of training input examples (one column per variable and one row per example).
-#' @param y: Table of training output examples (one column per variable and one row per example).
-#' @param horizon (0, number of examples): The length of forecast horizon (the number of time steps in the horizon).
-#' @param lookback (0, number of examples): The number of steps to look back in time to prepare past y values as forecast input.
-#' @param optimizer: One of available metaOpt algorithms.
-#' @param population (1, infinity]: Optimizer population size.
-#' @param generations (1, infinity]: Maximum number of optimization iterations.
-#' @param other: Other optimizer parameters.
-#' @param folder: Folder for csv export with best parameters and errors.
-#' @param name: Name of parameters and errors (csv file name prefix).
-#' @param verbose: Shows whether or not to log forecast errors and plot forecast results.
-#' @return Optimized SVR model.
-OptimizeSVR = function(x,
-                       y,
-                       horizon,
-                       lookback = 2*horizon,
-                       optimizer = "GOA",
-                       population = 10,
-                       generations = 20,
-                       other = list(),
-                       folder = NULL,
-                       name = NULL,
-                       verbose = FALSE) {
-    PrepareSet = function(x, y, horizon, lookback) {
-        x = as.data.frame(x)
-        y = as.data.frame(y)
-        train = 1:(Count(y) - horizon)
-        valid = (Count(y) - horizon - lookback + 1):Count(y)
-        return(list(x.train = as.data.frame(x[train,]),
-                    y.train = as.data.frame(y[train,]),
-                    x.valid = as.data.frame(x[valid,]),
-                    y.valid = as.data.frame(y[valid,])))
-    }
-    Evaluate = function(args) {
-        names(args) = c("nu", "gamma", "cost", "tolerance")
-        nu = args["nu"]
-        gamma = args["gamma"]
-        cost = args["cost"]
-        tolerance = args["tolerance"]
-
-        model = TrainSVR(set$x.train, set$y.train, horizon, lookback, nu, gamma, cost, tolerance)
-        output = model %>% TestSVR(set$x.valid, set$y.valid, horizon, lookback)
-
-        valid.rows = (Count(y) - horizon + 1):Count(y)
-        error = EvaluateForecast(y[valid.rows,], output, verbose = verbose)["RMSE[%]"]
-        if (is.null(best.error) || error < best.error) {
-            best.args <<- args
-            best.model <<- model
-            best.error <<- error
-            if (!is.null(folder)) {
-                ExportCSV(as.data.frame(best.args), folder, paste(name, "-args", sep = ""), rows = TRUE, separator = "=")
-                ExportCSV(as.data.frame(best.error), folder, paste(name, "-error", sep = ""), rows = TRUE, separator = "=")
-            }
-        }
-
-        return(error)
-    }
-
-    Log(c(optimizer, "-SVR optimization started (", generations, "x", population, " iterations)..."))
-    stopwatch = StopwatchStartNew()
-
-    optimal = NULL
-    best.args = NULL
-    best.model = NULL
-    best.error = NULL
-    set = PrepareSet(x, y, horizon, lookback)
-
-    # nu, gamma, cost, tolerance:
-    min = c(0, 0, 0.1, 0)
-    max = c(1, 1, 1, 0.1)
-    optimal = Optimize(Evaluate, min, max, optimizer, population, generations, other)
-
-    Log(c(optimizer, "-SVR optimization finished (duration = ", StopwatchElapsedSeconds(stopwatch), " sec)."))
-    print(optimal)
-    print(best.args)
-    print(best.error)
-    return(best.model)
-}
-
 #' TrainRNN: Trains Recurrent Neural Network (RNN).
 #' Creates Multiple-Input Multiple-Output (MIMO) RNN:
 #' Bidirectional Sequence to Sequence (S2S) Long Short-Term Memory (LSTM) with attention mechanism.
@@ -227,12 +146,12 @@ TrainRNN = function(x,
         horizon <<- Limit(horizon, 1, Count(y) - 1)
         lookback <<- Limit(lookback, 1, Count(y) - 1)
         context <<- Limit(context, 0.1, 0.9)
-        fnns <<- Limit(fnns, min = 0)
+        fnns <<- round(Limit(fnns, min = 0))
         fnnm <<- Limit(fnnm, 0.1, 0.9)
-        cnnf <<- Limit(cnnf, min = 1)
-        cnnk <<- Limit(cnnk, 2, lookback - 1)
-        cnnp <<- Limit(cnnk, 2, lookback - 1)
-        cnns <<- Limit(cnns, 0, floor(log(lookback/(cnnk - 1), base = cnnp)))
+        cnnf <<- round(Limit(cnnf, min = 1))
+        cnnk <<- round(Limit(cnnk, 2, lookback - 1))
+        cnnp <<- round(Limit(cnnk, 2, lookback - 1))
+        cnns <<- round(Limit(cnns, 0, floor(log(lookback/(cnnk - 1), base = cnnp))))
         fnndrop <<- Limit(fnndrop, 0, 0.9)
         cnndrop <<- Limit(cnndrop, 0, 0.9)
     }
@@ -417,102 +336,6 @@ SaveRNN = function(model, folder, file) model %>% save_model_hdf5(GetPath(folder
 #' @param file: Source file name.
 #' @return Trained RNN forecast model.
 LoadRNN = function(folder, file) return(load_model_hdf5(GetPath(folder, file, 'rnn')))
-
-#' OptimizeRNN: Optimized Recurrent Neural Network (RNN) training.
-#' Metaheuristic optimization of forecast model hyperparameters.
-#' @param x: Table of training input examples (one column per variable and one row per example).
-#' @param y: Table of training output examples (one column per variable and one row per example).
-#' @param horizon (0, number of examples): The length of forecast horizon (the number of time steps in the horizon).
-#' @param lookback (0, number of examples): The number of steps to look back in time to prepare past y values as forecast input.
-#' @param optimizer: One of available metaOpt algorithms.
-#' @param population (1, infinity]: Optimizer population size.
-#' @param generations (1, infinity]: Maximum number of optimization iterations.
-#' @param iterations (1, infinity]: Maximum number of training iterations.
-#' @param batch (1, infinity]: Batch size for each iteration.
-#' @param other: Other optimizer parameters.
-#' @param folder: Folder for csv export with best parameters and errors.
-#' @param name: Name of parameters and errors (csv file name prefix).
-#' @param verbose: Shows whether or not to log forecast errors and plot forecast results.
-#' @return Optimized RNN model.
-OptimizeRNN = function(x,
-                       y,
-                       horizon,
-                       lookback = 2*horizon,
-                       optimizer = "GOA",
-                       population = 10,
-                       generations = 20,
-                       iterations = 20,
-                       batch = 1024,
-                       other = list(),
-                       folder = NULL,
-                       name = NULL,
-                       verbose = FALSE) {
-    Prepare = function(x, y, horizon, lookback) {
-        x = as.data.frame(x)
-        y = as.data.frame(y)
-        train = 1:(Count(y) - horizon)
-        valid = (Count(y) - horizon - lookback + 1):Count(y)
-        return(list(x.train = as.data.frame(x[train,]),
-                    y.train = as.data.frame(y[train,]),
-                    x.valid = as.data.frame(x[valid,]),
-                    y.valid = as.data.frame(y[valid,])))
-    }
-    Evaluate = function(args) {
-        context = args[1]
-        fnns = round(args[2])
-        fnnm = args[3]
-        cnns = round(args[4])
-        cnnf = round(args[5])
-        cnnk = round(args[6])
-        cnnp = round(args[7])
-        fnndrop = args[8]
-        cnndrop = args[9]
-
-        args = c(context, fnns, fnnm, cnns, cnnf, cnnk, cnnp, fnndrop, cnndrop)
-        names(args) = c("context", "fnns", "fnnm", "cnns", "cnnf", "cnnk", "cnnp", "fnndrop", "cnndrop")
-
-        model = TrainRNN(set$x.train, set$y.train, horizon, lookback,
-                         context, fnns, fnnm, cnns, cnnf, cnnk, cnnp, fnndrop, cnndrop,
-                         iterations, batch, verbose)
-        output = model %>% TestRNN(set$x.valid, set$y.valid, horizon, lookback, verbose)
-
-        valid.rows = (Count(y) - horizon + 1):Count(y)
-        error = EvaluateForecast(y[valid.rows,], output, verbose = verbose)["RMSE[%]"]
-        if (is.null(best.error) || error < best.error) {
-            best.args <<- args
-            best.model <<- model
-            best.error <<- error
-            if (!is.null(folder)) {
-                ExportCSV(as.data.frame(best.args), folder, paste(name, "-args", sep = ""), rows = TRUE, separator = "=")
-                ExportCSV(as.data.frame(best.error), folder, paste(name, "-error", sep = ""), rows = TRUE, separator = "=")
-            }
-        } else {
-            rm(model)
-            k_clear_session()
-        }
-
-        return(error)
-    }
-
-    Log(c(optimizer, "-RNN optimization started (", generations, "x", population, " iterations)..."))
-    stopwatch = StopwatchStartNew()
-
-    best.args = NULL
-    best.model = NULL
-    best.error = NULL
-    set = Prepare(x, y, horizon, lookback)
-
-    # context, fnns, fnnm, cnns, cnnf, cnnk cnnp, fnndrop cnndrop:
-    min = c(0.4, 0, 0.2, 0, 128, 2, 2, 0.2, 0.2)
-    max = c(0.8, 9, 0.8, 5, 768, 5, 5, 0.6, 0.6)
-    optimal = Optimize(Evaluate, min, max, optimizer, population, generations, other)
-
-    Log(c(optimizer, "-RNN optimization finished (duration = ", StopwatchElapsedSeconds(stopwatch), " sec)."))
-    print(optimal)
-    print(best.args)
-    print(best.error)
-    return(best.model)
-}
 
 #' EvaluateForecast: Calculates forecast errors.
 #' Summarizes deterministic and/or probabilistic forecast errors.

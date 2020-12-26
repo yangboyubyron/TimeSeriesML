@@ -112,7 +112,16 @@ TSFDS = function(data,
 #' 2) "MM": Min-Max normalization
 #' 3) "AVG": Divide-by-average normalization
 #' 4) "Z": Z-normalization
-#' @param ...: Training parameters specific to forecast model.
+#' @param optimizer: One of available metaheuristic hyperparameter optimizers from metaOpt package.
+#' The 70:30 split ratio is used for separating training from validation data during optimization.
+#' Set the optimizer to NULL if the optimization is not required.
+#' @param population (1, infinity]: Optimizer population size.
+#' @param generations (1, infinity]: Maximum number of optimization iterations.
+#' @param optparam: Other optimizer parameters.
+#' @param verbose: Shows whether or not to log details.
+#' @param folder: Export folder.
+#' @param ...: Non-default training hyperparameters to use when optimization is not required.
+#' These are SVR- or RNN-specific parameters, used by TrainSVR or TrainRNN function, respectively.
 #' @return Table of forecasts.
 TSF = function(data,
                col_time,
@@ -126,121 +135,235 @@ TSF = function(data,
                uncertainty = 1,
                encoding = 'onehot',
                normalization = 'MM',
+               optimizer = "GOA",
+               population = 10,
+               generations = 10,
+               optparam = list(),
                verbose = FALSE,
                folder = NULL,
                ...) {
-    DS = function(col_y) {
-        set = TSFDS(data,
-                    col_time,
-                    cols_x_required,
-                    cols_x_optional,
-                    col_y,
-                    horizon,
-                    lookback,
-                    splitter,
-                    uncertainty,
-                    encoding,
-                    normalization)
-        return(set)
-    }
-
-    GetName = function(col_y) return(ifelse(Count(colnames(data)) == 0, col_y, colnames(data)[col_y]))
-    CanSave = function() return(type == 'RNN' && !is.null(folder))
-    Save = function(model, col_y) SaveRNN(model, folder, GetName(col_y))
-    Load = function(col_y) return(LoadRNN(folder, GetName(col_y)))
-
-    TrySave = function(model, col_y) {
-        if (CanSave()) model %>% Save(col_y)
-    }
-    TryLoad = function(col_y) {
-        if (!CanSave()) return(NULL)
-        tryCatch({ return(Load(col_y)) }, error = function(e){ return(NULL) })
-    }
     TryExport = function(table, file) {
         if (!is.null(folder)) table %>% ExportCSV(folder, name, verbose = verbose)
     }
+    Forecast = function(col_y) {
+        GetName = function() return(ifelse(Count(colnames(data)) == 0, col_y, colnames(data)[col_y]))
+        TestIndexSplitter = function() return(round(splitter / horizon * 0.3))
+        TrainTo = function() return(splitter - TestIndexSplitter() * horizon)
+        ValidateFrom = function() return(TrainTo() + 1)
+        TestFrom = function() return(splitter + 1)
 
-    Train = function(set) {
-        train = set$train
-        if (type == 'SVR') {
-            return(TrainSVR(train$x, train$y, horizon, lookback, ...))
-        } else {
-            return(TrainRNN(train$x, train$y, horizon, lookback, ..., verbose = verbose))
+        Dataset = function() {
+            set = TSFDS(data,
+                        col_time,
+                        cols_x_required,
+                        cols_x_optional,
+                        col_y,
+                        horizon,
+                        lookback,
+                        TrainTo(),
+                        uncertainty,
+                        encoding,
+                        normalization)
+            return(set)
         }
-    }
-    Test = function(model, set, test.index) {
-        NormForecast = function(x, y) {
-            if (type == 'SVR') {
-                return(model %>% TestSVR(x, y, horizon, lookback))
-            } else {
-                return(model %>% TestRNN(x, y, horizon, lookback))
-            }
+
+        CanSave = function() return(type == 'RNN' && !is.null(folder))
+        Save = function(model) SaveRNN(model, folder, GetName())
+        Load = function() return(LoadRNN(folder, GetName()))
+
+        TrySave = function(model) {
+            if (CanSave()) model %>% Save()
+        }
+        TryLoad = function() {
+            if (!CanSave()) return(NULL)
+            tryCatch({ return(Load()) }, error = function(e){ return(NULL) })
         }
 
-        test = set$test[[test.index]]
-        nres = NormForecast(test$x, test$y)
-        return(Norm(nres, set$norm$y, FALSE))
-    }
-    Update = function(model, set, test.index) {
-        if (type == 'SVR') {
-            x = set$train$x
-            y = set$train$y
-            for (i in 1:test.index) {
-                test = set$test[[i]]
-                rows = (Count(test$x)-horizon+1):Count(test$x)
-                x = Union(x, test$x[rows,])
-                y = Union(y, test$y[rows,])
+        Train = function(set) {
+            TrainModel = function() {
+                if (type == 'SVR') {
+                    return(TrainSVR(set$train$x, set$train$y, horizon, lookback, ...))
+                } else {
+                    return(TrainRNN(set$train$x, set$train$y, horizon, lookback, ..., verbose = verbose))
+                }
             }
 
-            return(TrainSVR(x, y, horizon, lookback, ...))
-        } else {
-            test = set$test[[test.index]]
-            model %>% UpdateRNN(test$x, test$y, horizon, lookback, verbose = verbose)
+            model = TrainModel()
+            model %>% TrySave()
             return(model)
         }
-    }
-    Errors = function(col_y, forecast) {
-        from = splitter + 1
-        to = from + Count(forecast) - 1
-        errors = EvaluateForecast(data[from:to, col_y], forecast, verbose = verbose)
-        return(errors)
-    }
+        Test = function(model, set, i) {
+            NormForecast = function(x, y) {
+                if (type == 'SVR') {
+                    return(model %>% TestSVR(x, y, horizon, lookback))
+                } else {
+                    return(model %>% TestRNN(x, y, horizon, lookback))
+                }
+            }
 
-    Forecast = function(col_y) {
-        target = GetName(col_y)
-        Log(c("Forecasting ", target))
+            test = set$test[[i]]
+            nres = NormForecast(test$x, test$y)
+            return(Norm(nres, set$norm$y, FALSE))
+        }
+        Update = function(model, set, i, args = c()) {
+            if (type == 'SVR') {
+                x = set$train$x
+                y = set$train$y
+                for (t in 1:i) {
+                    test = set$test[[t]]
+                    rows = (Count(test$x)-horizon+1):Count(test$x)
+                    x = Union(x, test$x[rows,])
+                    y = Union(y, test$y[rows,])
+                }
 
-        watch = StopwatchStartNew()
-        set = DS(col_y)
+                if (Count(args) == 0) {
+                    return(TrainSVR(x, y, horizon, lookback, ...))
+                } else {
+                    return(TrainSVR(x, y, horizon, lookback,
+                                    args$nu,
+                                    args$gamma,
+                                    args$cost,
+                                    args$tolerance))
+                }
+            } else {
+                test = set$test[[i]]
+                model %>% UpdateRNN(test$x, test$y, horizon, lookback, verbose = verbose)
+                return(model)
+            }
+        }
+        Errors = function(from, forecast) {
+            to = from + Count(forecast) - 1
+            actual = data[from:to, col_y]
+            errors = EvaluateForecast(actual, forecast, verbose = verbose)
+            return(errors)
+        }
+        OptTrain = function(set) {
+            best = list(args = c(), model = NULL, error = NA)
 
-        model = TryLoad(col_y)
-        if (is.null(model)) {
-            model = Train(set) # TODO: Optimize.
-            model %>% TrySave(col_y)
+            Evaluate = function(model, args) {
+                forecast = data.frame()
+                for (i in 1:TestIndexSplitter()) {
+                    forecast = Union(forecast, model %>% Test(set, i))
+                    model = model %>% Update(set, i)
+                }
+
+                error = Errors(ValidateFrom(), forecast)["RMSE[%]"]
+                if (is.na(best$error) || error < best$error) {
+                    best$args = args
+                    best$model = model
+                    best$error = error
+
+                    TrySave(best$model)
+                    TryExport(best$args, paste(GetName(), "args", sep = "-"))
+                    TryExport(best$error, paste(GetName(), "error", sep = "-"))
+                } else if (type == 'RNN') {
+                    rm(model)
+                    k_clear_session()
+                }
+
+                return(error)
+            }
+            EvaluateRNN = function(args) {
+                names(args) = c("context", "fnns", "fnnm", "cnns", "cnnf", "cnnk", "cnnp", "fnndrop", "cnndrop")
+                args = as.list(args)
+                model = TrainRNN(x        = set$train$x,
+                                 y        = set$train$y,
+                                 horizon  = horizon,
+                                 lookback = lookback,
+                                 context  = args$context,
+                                 fnns     = args$fnns,
+                                 fnnm     = args$fnnm,
+                                 cnns     = args$cnns,
+                                 cnnf     = args$cnnf,
+                                 cnnk     = args$cnnk,
+                                 cnnp     = args$cnnp,
+                                 fnndrop  = args$fnndrop,
+                                 cnndrop  = args$cnndrop,
+                                 verbose  = verbose)
+                return(model %>% Evaluate(args))
+            }
+            OptimizeRNN = function(){
+                # context, fnns, fnnm, cnns, cnnf, cnnk cnnp, fnndrop cnndrop:
+                min = c(0.6, 0, 0.2, 0, 256, 2, 2, 0.4, 0.4)
+                max = c(0.8, 9, 0.5, 5, 768, 4, 4, 0.6, 0.6)
+                Optimize(EvaluateRNN, min, max, optimizer, population, generations, optparam)
+            }
+            EvaluateSVR = function(args) {
+                names(args) = c("nu", "gamma", "cost", "tolerance")
+                args = as.list(args)
+                model = TrainSVR(set$x.train,
+                                 set$y.train,
+                                 horizon,
+                                 lookback,
+                                 args$nu,
+                                 args$gamma,
+                                 args$cost,
+                                 args$tolerance)
+                return(model %>% Evaluate(args))
+            }
+            OptimizeSVR = function() {
+                # nu, gamma, cost, tolerance:
+                min = c(0, 0, 0.1, 0)
+                max = c(1, 1, 1, 0.1)
+                Optimize(EvaluateSVR, min, max, optimizer, population, generations, optparam)
+            }
+
+            if (type == 'SVR') {
+                OptimizeSVR()
+            } else {
+                OptimizeRNN()
+            }
+
+            return(best)
+        }
+        TryOptTrain = function(set) {
+            best = list(args = c(), model = TryLoad(), error = NA)
+            if (!is.null(best$model)) {
+                Log(c(type, " model loaded."))
+                return(best)
+            }
+            if (is.null(optimizer)) {
+                watch = Log(c(type, " training started..."))
+
+                best$model = set %>% Train()
+
+                Log(c(type, " training finished (duration = ", Elapsed(watch), " sec)."))
+                return(best)
+            }
+
+            watch = Log(c(optimizer, "-", type, " optimization started (", generations, "x", population, " iterations)..."))
+
+            best = set %>% OptTrain()
+
+            Log(c(optimizer, "-", type, " optimization finished (duration = ", Elapsed(watch), " sec, error = ", best$error, ")."))
+            if (verbose) print(best$args)
+            return(best)
         }
 
-        training = StopwatchElapsedSeconds(watch)
+        watch = Log(c("Forecasting ", GetName()))
+
+        set = Dataset()
+        best = set %>% TryOptTrain()
+
+        training = Elapsed(watch)
         testing = 0
         updating = 0
 
         forecast = data.frame()
-        for (i in 1:Count(set$test)) {
-            watch = StopwatchStartNew()
-            forecast = Union(forecast, model %>% Test(set, i))
-            testing = testing + StopwatchElapsedSeconds(watch)
+        for (i in (TestIndexSplitter()+1):Count(set$test)) {
+            watch = Stopwatch()
+            forecast = Union(forecast, best$model %>% Test(set, i))
+            testing = testing + Elapsed(watch)
 
-            watch = StopwatchStartNew()
-            model = model %>% Update(set, i)
-            updating = updating + StopwatchElapsedSeconds(watch)
-
-            model %>% TrySave(col_y)
+            watch = Stopwatch()
+            best$model = best$model %>% Update(set, i, best$args)
+            updating = updating + Elapsed(watch)
         }
 
-        colnames(forecast) = target
-
-        stats = c(target, training, testing, updating)
+        colnames(forecast) = GetName()
+        stats = c(colnames(forecast), training, testing, updating)
         names(stats) = c("target", "training", "testing", "updating")
-        stats = c(stats, Errors(col_y, forecast))
+        stats = c(stats, Errors(TestFrom(), forecast))
 
         return(list(forecast = forecast, stats = t(stats)))
     }
